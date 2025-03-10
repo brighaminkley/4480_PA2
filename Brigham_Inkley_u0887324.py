@@ -5,7 +5,6 @@ from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.addresses import IPAddr, EthAddr
 from pox.lib.packet import ethernet, arp
-import random
 
 log = core.getLogger()
 
@@ -29,57 +28,64 @@ class LoadBalancer (object):
             log.info("Intercepted ARP request for virtual IP")
             server_ip = SERVERS[server_index]
             server_mac = MACS[server_ip]
-        
-            #Create a new ARP reply
+
+            # Create a new ARP reply (Step 3)
             arp_reply = arp()
             arp_reply.hwsrc = server_mac
             arp_reply.hwdst = packet.src
             arp_reply.opcode = arp.REPLY
             arp_reply.protosrc = VIRTUAL_IP
             arp_reply.protodst = packet.payload.protosrc
-        
-            #Wrap it in an Ethernet frame
+
+            # Wrap it in an Ethernet frame
             ethernet_reply = ethernet()
             ethernet_reply.src = server_mac
             ethernet_reply.dst = packet.src
             ethernet_reply.type = ethernet.ARP_TYPE
             ethernet_reply.payload = arp_reply
-        
-            #Send ARP reply
+
+            # Send ARP reply
             msg = of.ofp_packet_out()
             msg.data = ethernet_reply.pack()
             msg.actions.append(of.ofp_action_output(port=event.port))
             self.connection.send(msg)
-        
-            #Rotate server for round-robin balancing
+
+            # Rotate server for round-robin balancing
             server_index = (server_index + 1) % len(SERVERS)
 
-            # Install flow rules to forward ICMP traffic
-            self.install_flow(event.port, server_ip, server_mac)
+            # Install flow rules to forward ICMP traffic (Step 4)
+            self.install_flow(event.port, server_ip, server_mac, packet)
 
-    def install_flow(self, client_port, server_ip, server_mac):
+    def install_flow(self, client_port, server_ip, server_mac, packet):
         # Flow for traffic from client to server (virtual IP to real IP)
         msg_client_to_server = of.ofp_flow_mod()
-        msg_client_to_server.match.dl_type = 0x0800  # IP packets [cite: 32, 33, 34]
-        msg_client_to_server.match.nw_dst = VIRTUAL_IP  # Match packets destined for virtual IP [cite: 32, 33, 34]
-        msg_client_to_server.match.in_port = client_port  # Match the client's port [cite: 32, 33, 34]
-        msg_client_to_server.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        msg_client_to_server.match.dl_type = 0x0800  # IP packets
+        msg_client_to_server.match.nw_dst = VIRTUAL_IP  # Match packets destined for virtual IP
+        msg_client_to_server.match.in_port = client_port  # Match the client's port
+
+        # set_field: <server_mac> -> eth_dst
         msg_client_to_server.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-        
-        # Forward the packet to the server [cite: 32, 33, 34]
+        # set_field: <server_ip> -> eth_dst
+        msg_client_to_server.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+
+        # output: <server_port>
         msg_client_to_server.actions.append(of.ofp_action_output(port=self.connection.ports[server_ip]))
         self.connection.send(msg_client_to_server)
 
         # Flow for traffic from server to client (real IP to virtual IP)
         msg_server_to_client = of.ofp_flow_mod()
-        msg_server_to_client.match.dl_type = 0x0800  # IP packets [cite: 35]
-        msg_server_to_client.match.nw_src = server_ip  # Match packets coming from the server [cite: 35]
-        msg_server_to_client.match.nw_dst = IPAddr(packet.payload.protodst) #packet.payload.protodst  # Match packets destined for the client [cite: 35]
-        msg_server_to_client.match.in_port = self.connection.ports[server_ip]  # Match the server's port [cite: 35]
+        msg_server_to_client.match.dl_type = 0x0800  # IP packets
+        msg_server_to_client.match.nw_src = server_ip  # Match packets coming from the server
+        msg_server_to_client.match.nw_dst = packet.payload.protosrc
+
+        msg_server_to_client.match.in_port = self.connection.ports[server_ip]  # Match the server's port
+
+        # set_field: 10.0.0.10 -> eth_src
         msg_server_to_client.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
+        # set_field: <server_mac> -> eth_src
         msg_server_to_client.actions.append(of.ofp_action_dl_addr.set_src(server_mac))
-            
-        # Forward the packet to the client
+
+        # output: <client_port>
         msg_server_to_client.actions.append(of.ofp_action_output(port=client_port))
         self.connection.send(msg_server_to_client)
 
