@@ -58,13 +58,30 @@ class LoadBalancer (object):
             self.install_flow(event.port, server_ip, server_mac)
 
     def install_flow(self, client_port, server_ip, server_mac):
-        msg = of.ofp_flow_mod()
-        msg.match.dl_type = 0x0800  # IP packets
-        msg.match.nw_dst = VIRTUAL_IP
-        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-        msg.actions.append(of.ofp_action_output(port=self.connection.ports[server_ip]))
-        self.connection.send(msg)
+        # Flow for traffic from client to server (virtual IP to real IP)
+        msg_client_to_server = of.ofp_flow_mod()
+        msg_client_to_server.match.dl_type = 0x0800  # IP packets [cite: 32, 33, 34]
+        msg_client_to_server.match.nw_dst = VIRTUAL_IP  # Match packets destined for virtual IP [cite: 32, 33, 34]
+        msg_client_to_server.match.in_port = client_port  # Match the client's port [cite: 32, 33, 34]
+        msg_client_to_server.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        msg_client_to_server.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        
+        # Forward the packet to the server [cite: 32, 33, 34]
+        msg_client_to_server.actions.append(of.ofp_action_output(port=self.connection.ports[server_ip]))
+        self.connection.send(msg_client_to_server)
+
+        # Flow for traffic from server to client (real IP to virtual IP)
+        msg_server_to_client = of.ofp_flow_mod()
+        msg_server_to_client.match.dl_type = 0x0800  # IP packets [cite: 35]
+        msg_server_to_client.match.nw_src = server_ip  # Match packets coming from the server [cite: 35]
+        msg_server_to_client.match.nw_dst = IPAddr(packet.payload.protodst) #packet.payload.protodst  # Match packets destined for the client [cite: 35]
+        msg_server_to_client.match.in_port = self.connection.ports[server_ip]  # Match the server's port [cite: 35]
+        msg_server_to_client.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
+        msg_server_to_client.actions.append(of.ofp_action_dl_addr.set_src(server_mac))
+            
+        # Forward the packet to the client
+        msg_server_to_client.actions.append(of.ofp_action_output(port=client_port))
+        self.connection.send(msg_server_to_client)
 
 def launch():
     def start_switch(event):
