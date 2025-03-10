@@ -29,10 +29,10 @@ class LoadBalancer (object):
             server_ip = SERVERS[server_index]
             server_mac = MACS[server_ip]
 
-            # Create a new ARP reply (Step 3)
+            # Create a new ARP reply
             arp_reply = arp()
             arp_reply.hwsrc = server_mac
-            arp_reply.hwdst = packet.src
+            arp_reply.hwdst = packet.payload.protosrc
             arp_reply.opcode = arp.REPLY
             arp_reply.protosrc = VIRTUAL_IP
             arp_reply.protodst = packet.payload.protosrc
