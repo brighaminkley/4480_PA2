@@ -21,40 +21,41 @@ class LoadBalancer (object):
         connection.addListeners(self)
 
     def _handle_PacketIn(self, event):
-        global server_index
-        packet = event.parsed
+        try:
+            global server_index
+            packet = event.parsed
 
-        if packet.type == packet.ARP_TYPE and packet.payload.protodst == VIRTUAL_IP:
-            log.info("Intercepted ARP request for virtual IP")
-            server_ip = SERVERS[server_index]
-            server_mac = MACS[server_ip]
+            if packet.type == packet.ARP_TYPE and packet.payload.protodst == VIRTUAL_IP:
+                log.info("Intercepted ARP request for virtual IP")
+                server_ip = SERVERS[server_index]
+                server_mac = MACS[server_ip]
 
-            # Create a new ARP reply
-            arp_reply = arp()
-            arp_reply.hwsrc = server_mac
-            arp_reply.hwdst = packet.payload.protosrc
-            arp_reply.opcode = arp.REPLY
-            arp_reply.protosrc = VIRTUAL_IP
-            arp_reply.protodst = packet.payload.protosrc
+                # Create and send ARP reply
+                arp_reply = arp()
+                arp_reply.hwsrc = server_mac
+                arp_reply.hwdst = packet.payload.protosrc
+                arp_reply.opcode = arp.REPLY
+                arp_reply.protosrc = VIRTUAL_IP
+                arp_reply.protodst = packet.payload.protosrc
 
-            # Wrap it in an Ethernet frame
-            ethernet_reply = ethernet()
-            ethernet_reply.src = server_mac
-            ethernet_reply.dst = packet.src
-            ethernet_reply.type = ethernet.ARP_TYPE
-            ethernet_reply.payload = arp_reply
+                ethernet_reply = ethernet()
+                ethernet_reply.src = server_mac
+                ethernet_reply.dst = packet.src
+                ethernet_reply.type = ethernet.ARP_TYPE
+                ethernet_reply.payload = arp_reply
 
-            # Send ARP reply
-            msg = of.ofp_packet_out()
-            msg.data = ethernet_reply.pack()
-            msg.actions.append(of.ofp_action_output(port=event.port))
-            self.connection.send(msg)
+                msg = of.ofp_packet_out()
+                msg.data = ethernet_reply.pack()
+                msg.actions.append(of.ofp_action_output(port=event.port))
+                self.connection.send(msg)
 
-            # Rotate server for round-robin balancing
-            server_index = (server_index + 1) % len(SERVERS)
+                # Rotate server for round-robin balancing
+                server_index = (server_index + 1) % len(SERVERS)
 
-            # Install flow rules to forward ICMP traffic (Step 4)
-            self.install_flow(event.port, server_ip, server_mac, packet)
+                self.install_flow(event.port, server_ip, server_mac, packet)
+        except Exception as e:
+            log.error(f"Error handling PacketIn event: {e}")
+        
 
     def install_flow(self, client_port, server_ip, server_mac, packet):
         log.info("Installing client-to-server flow:")
