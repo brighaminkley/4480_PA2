@@ -4,6 +4,7 @@
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.addresses import IPAddr, EthAddr
+from pox.lib.packet import ethernet, arp
 import random
 
 log = core.getLogger()
@@ -28,26 +29,29 @@ class LoadBalancer (object):
             log.info("Intercepted ARP request for virtual IP")
             server_ip = SERVERS[server_index]
             server_mac = MACS[server_ip]
-
-            # Send an ARP reply with the assigned server's MAC
-            arp_reply = packet.ARP()
+        
+            #Create a new ARP reply
+            arp_reply = arp()
             arp_reply.hwsrc = server_mac
             arp_reply.hwdst = packet.src
-            arp_reply.opcode = packet.ARP_REPLY
+            arp_reply.opcode = arp.REPLY
             arp_reply.protosrc = VIRTUAL_IP
             arp_reply.protodst = packet.payload.protosrc
-
-            ethernet = packet.ETHERNET()
-            ethernet.src = server_mac
-            ethernet.dst = packet.src
-            ethernet.payload = arp_reply
-
+        
+            #Wrap it in an Ethernet frame
+            ethernet_reply = ethernet()
+            ethernet_reply.src = server_mac
+            ethernet_reply.dst = packet.src
+            ethernet_reply.type = ethernet.ARP_TYPE
+            ethernet_reply.payload = arp_reply
+        
+            #Send ARP reply
             msg = of.ofp_packet_out()
-            msg.data = ethernet.pack()
+            msg.data = ethernet_reply.pack()
             msg.actions.append(of.ofp_action_output(port=event.port))
             self.connection.send(msg)
-
-            # Round-robin selection
+        
+            #Rotate server for round-robin balancing
             server_index = (server_index + 1) % len(SERVERS)
 
             # Install flow rules to forward ICMP traffic
