@@ -26,12 +26,26 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("5:10 Load balancer initialized.")
+        log.info("Load balancer initialized.")
 
         # Install base rules
         self.install_arp_rule()
         self.install_icmp_flood_rule()
-        self.add_default_drop_rule()
+        # self.add_default_drop_rule()
+
+        # Dump flows to check if rules are installed
+        log.info("Dumping flow table after initialization:")
+        self.dump_flows()
+
+    def dump_flows(self):
+        log.info("Requesting flow table...")
+        msg = of.ofp_stats_request()
+        msg.type = of.OFPST_FLOW
+        self.connection.send(msg)
+    
+    def _handle_FlowStatsReceived(self, event):
+        for flow in event.stats:
+            log.info(f"Flow: {flow.match} -> actions: {flow.actions}")
 
     def add_default_drop_rule(self):
         # Low-priority rule to drop unmatched traffic
@@ -65,16 +79,22 @@ class LoadBalancer(object):
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
+        log.info(f"PacketIn received: {packet}")
+
         if not packet:
+            log.warning("Received empty packet.")
             return
 
         if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
+            log.info("Handling ARP request.")
             self.handle_arp_request(packet, event)
         elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == 1:  # ICMP
             log.info(f"Handling ICMP packet from {packet.payload.srcip} to {packet.payload.dstip}")
             msg = of.ofp_packet_out(data=event.ofp)
             msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
             self.connection.send(msg)
+        else:
+            log.warning(f"Unhandled packet type: {packet.type}")
 
     def handle_arp_request(self, packet, event):
         global server_index
@@ -191,7 +211,7 @@ class LoadBalancer(object):
 
 def launch():
     def start_switch(event):
-        log.info("Initializing Load Balancer")
+        log.info(f"Switch connected: {event.connection.dpid}")
         LoadBalancer(event.connection)
 
     core.openflow.addListenerByName("ConnectionUp", start_switch)
