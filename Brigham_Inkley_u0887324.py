@@ -40,6 +40,29 @@ class LoadBalancer(object):
 
         if packet.payload.protodst != VIRTUAL_IP:
             return
+        
+        if packet.payload.protosrc in SERVERS and packet.payload.protodst not in SERVERS:
+            log.info(f"Intercepted ARP request from server {packet.payload.protosrc} looking for client {packet.payload.protodst}")
+
+            arp_reply = arp()
+            arp_reply.hwsrc = packet.dst  # Virtual IP MAC
+            arp_reply.hwdst = packet.src
+            arp_reply.opcode = arp.REPLY
+            arp_reply.protosrc = packet.payload.protodst
+            arp_reply.protodst = packet.payload.protosrc
+
+            ethernet_reply = ethernet()
+            ethernet_reply.type = ethernet.ARP_TYPE
+            ethernet_reply.dst = packet.src
+            ethernet_reply.src = packet.dst
+            ethernet_reply.payload = arp_reply
+
+            msg = of.ofp_packet_out()
+            msg.data = ethernet_reply.pack()
+            msg.actions.append(of.ofp_action_output(port=event.port))
+            self.connection.send(msg)
+
+            log.info(f"Replied to server {packet.payload.protosrc}'s ARP request for client {packet.payload.protodst}")
 
         # Select server using round-robin
         server_ip = SERVERS[server_index]
