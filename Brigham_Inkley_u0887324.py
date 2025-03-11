@@ -20,6 +20,7 @@ SERVER_PORTS = {
     IPAddr("10.0.0.6"): 6   # Port for h6
 }
 server_index = 0  # Tracks which server to assign next
+client_macs = {}  # Dictionary to store client MAC addresses
 
 
 class LoadBalancer(object):
@@ -32,14 +33,17 @@ class LoadBalancer(object):
             global server_index
             packet = event.parsed
 
-            #Handle ARP Requests
+            # Handle ARP Requests
             if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
                 log.info("TAKE 1: Intercepted ARP request for virtual IP")
 
                 server_ip = IPAddr(SERVERS[server_index])
                 server_mac = MACS[server_ip]
 
-                # ✅ Create ARP reply
+                # Store client MAC address
+                client_macs[packet.payload.protosrc] = packet.src
+
+                # Create ARP reply
                 arp_reply = arp()
                 arp_reply.hwsrc = server_mac
                 arp_reply.hwdst = packet.src
@@ -53,16 +57,16 @@ class LoadBalancer(object):
                 ethernet_reply.src = server_mac
                 ethernet_reply.payload = arp_reply
 
-                # ✅ Send ARP reply
+                #Send ARP reply
                 msg = of.ofp_packet_out()
                 msg.data = ethernet_reply.pack()
                 msg.actions.append(of.ofp_action_output(port=event.port))
                 self.connection.send(msg)
 
-                # ✅ Rotate server for round-robin balancing
+                #Rotate server for round-robin balancing
                 server_index = (server_index + 1) % len(SERVERS)
 
-                # ✅ Install flow rules
+                #Install flow rules
                 self.install_flow(event.port, server_ip, server_mac, packet)
 
         except Exception as e:
@@ -77,10 +81,16 @@ class LoadBalancer(object):
                 log.error(f"Error: server_ip {server_ip} not found in SERVER_PORTS!")
                 return
 
-            # ✅ Install client-to-server flow
+            client_mac = client_macs.get(packet.payload.protosrc)
+            if client_mac is None:
+                log.error(f"Error: Client MAC address not found for {packet.payload.protosrc}!")
+                return
+
+            #Install client-to-server flow
             log.info("Installing client-to-server flow:")
             log.info(f"  Match: in_port={client_port}, dl_type=0x0800, nw_dst={VIRTUAL_IP}")
-            log.info(f"  Actions: set_dst(mac)={server_mac}, set_dst(ip)={server_ip}, output={server_port}")
+            log.info(
+                f"  Actions: set_dst(mac)={server_mac}, set_dst(ip)={server_ip}, output={server_port}")
 
             msg_client_to_server = of.ofp_flow_mod()
             msg_client_to_server.match.dl_type = 0x0800
@@ -91,10 +101,12 @@ class LoadBalancer(object):
             msg_client_to_server.actions.append(of.ofp_action_output(port=server_port))  # ✅ Use mapped port
             self.connection.send(msg_client_to_server)
 
-            # ✅ Install server-to-client flow
+            #Install server-to-client flow
             log.info("Installing server-to-client flow:")
-            log.info(f"  Match: in_port={server_port}, dl_type=0x0800, nw_src={server_ip}, nw_dst={packet.payload.protosrc}")
-            log.info(f"  Actions: set_src(ip)={VIRTUAL_IP}, set_src(mac)={server_mac}, output={client_port}")
+            log.info(
+                f"  Match: in_port={server_port}, dl_type=0x0800, nw_src={server_ip}, nw_dst={packet.payload.protosrc}")
+            log.info(
+                f"  Actions: set_src(ip)={VIRTUAL_IP}, set_src(mac)={server_mac}, set_dst(mac)={client_mac}, output={client_port}")
 
             msg_server_to_client = of.ofp_flow_mod()
             msg_server_to_client.match.dl_type = 0x0800
@@ -103,6 +115,8 @@ class LoadBalancer(object):
             msg_server_to_client.match.in_port = server_port
             msg_server_to_client.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
             msg_server_to_client.actions.append(of.ofp_action_dl_addr.set_src(server_mac))
+            #Add this line to set the destination MAC
+            msg_server_to_client.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
             msg_server_to_client.actions.append(of.ofp_action_output(port=client_port))
             self.connection.send(msg_server_to_client)
 
