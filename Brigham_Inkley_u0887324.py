@@ -68,9 +68,10 @@ class LoadBalancer(object):
         log.info(f"Sent ARP reply with MAC {server_mac} for virtual IP {VIRTUAL_IP}.")
 
         # Install flow rules
-        self.install_flow_rules(event.port, packet.src, server_ip, server_mac, server_port)
+        self.install_flow_rules(event.port, packet.src, server_ip, server_mac, server_port, IPAddr(packet.payload.protosrc))
 
-    def install_flow_rules(self, client_port, client_mac, server_ip, server_mac, server_port):
+
+    def install_flow_rules(self, client_port, client_mac, server_ip, server_mac, server_port, client_ip):
         # Client to server flow
         match = of.ofp_match()
         match.in_port = client_port
@@ -90,7 +91,7 @@ class LoadBalancer(object):
         match.in_port = server_port
         match.dl_type = 0x0800
         match.nw_src = server_ip
-        match.nw_dst = client_mac
+        match.nw_dst = client_ip  # Now using IP, not MAC
 
         msg = of.ofp_flow_mod()
         msg.match = match
@@ -99,7 +100,8 @@ class LoadBalancer(object):
         msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
         msg.actions.append(of.ofp_action_output(port=client_port))
         self.connection.send(msg)
-        log.info(f"Installed server-to-client flow: server {server_ip} -> client port {client_port}.")
+        log.info(f"Installed server-to-client flow: server {server_ip} -> client IP {client_ip}.")
+
 
 
 def launch():
