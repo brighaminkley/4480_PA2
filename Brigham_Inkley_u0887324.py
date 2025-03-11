@@ -26,15 +26,24 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("5:29 Load balancer initialized.")
+        log.info("5:33 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
 
-        # Handle ARP Requests
-        if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
-            log.info("Intercepted ARP request for virtual IP.")
+        if not packet:
+            log.warning("Ignoring empty packet.")
+            return
 
+        # Log packet details for debugging
+        log.info(f"PacketIn received: {packet}")
+        log.info(f"Packet type: {packet.type}")
+
+        # Handle ARP requests (from clients or servers)
+        if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
+            log.info("Intercepted ARP request")
+
+            # Client requesting the virtual IP (10.0.0.10)
             if packet.payload.protodst == VIRTUAL_IP:
                 global server_index
                 server_ip = SERVERS[server_index]
@@ -42,19 +51,22 @@ class LoadBalancer(object):
                 server_port = SERVER_PORTS[server_ip]
                 server_index = (server_index + 1) % len(SERVERS)
 
-                log.info(f"Assigning {server_ip} to client {packet.payload.protosrc}")
+                client_ip = packet.payload.protosrc
+                client_mac = packet.src
 
-                # Send ARP reply
+                log.info(f"Assigning server {server_ip} to client {client_ip}")
+
+                # Send ARP reply (server MAC -> client MAC)
                 arp_reply = arp()
                 arp_reply.hwsrc = server_mac
-                arp_reply.hwdst = packet.src
+                arp_reply.hwdst = client_mac
                 arp_reply.opcode = arp.REPLY
                 arp_reply.protosrc = VIRTUAL_IP
-                arp_reply.protodst = packet.payload.protosrc
+                arp_reply.protodst = client_ip
 
                 ethernet_reply = ethernet()
                 ethernet_reply.type = ethernet.ARP_TYPE
-                ethernet_reply.dst = packet.src
+                ethernet_reply.dst = client_mac
                 ethernet_reply.src = server_mac
                 ethernet_reply.payload = arp_reply
 
@@ -64,9 +76,52 @@ class LoadBalancer(object):
                 self.connection.send(msg)
                 log.info(f"Sent ARP reply with MAC {server_mac} for virtual IP {VIRTUAL_IP}")
 
-                # Install client-to-server flow
-                client_ip = packet.payload.protosrc
-                self.install_flow_rules(event.port, packet.src, client_ip, server_ip, server_mac, server_port)
+                # Install flows for both client-to-server and server-to-client communication
+                self.install_flow_rules(event.port, client_mac, client_ip, server_ip, server_mac, server_port)
+
+            # Server requesting a client's MAC address
+            elif packet.payload.protosrc in SERVERS:
+                server_ip = packet.payload.protosrc
+                client_ip = packet.payload.protodst
+                client_mac = packet.src
+                client_port = event.port
+
+                log.info(f"Server {server_ip} is requesting MAC for client {client_ip}")
+
+                # Send ARP reply (client MAC -> server MAC)
+                arp_reply = arp()
+                arp_reply.hwsrc = client_mac
+                arp_reply.hwdst = packet.src
+                arp_reply.opcode = arp.REPLY
+                arp_reply.protosrc = client_ip
+                arp_reply.protodst = server_ip
+
+                ethernet_reply = ethernet()
+                ethernet_reply.type = ethernet.ARP_TYPE
+                ethernet_reply.dst = packet.src
+                ethernet_reply.src = client_mac
+                ethernet_reply.payload = arp_reply
+
+                msg = of.ofp_packet_out()
+                msg.data = ethernet_reply.pack()
+                msg.actions.append(of.ofp_action_output(port=event.port))
+                self.connection.send(msg)
+                log.info(f"Replied to server {server_ip}'s ARP request for client {client_ip}")
+
+        # Handle IP packets (ICMP for ping)
+        elif packet.type == ethernet.IP_TYPE:
+            log.info(f"Handling IP packet from {packet.payload.srcip} to {packet.payload.dstip}")
+
+            # Optional: Flood unmatched IP packets (for debugging)
+            msg = of.ofp_packet_out()
+            msg.data = event.ofp
+            msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
+            self.connection.send(msg)
+            log.info("Flooded unmatched IP packet.")
+
+        else:
+            log.warning(f"Unhandled packet type: {packet.type}")
+
 
     def install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac, server_port):
         """
