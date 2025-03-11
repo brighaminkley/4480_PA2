@@ -4,7 +4,7 @@
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.addresses import IPAddr, EthAddr
-from pox.lib.packet import ethernet, arp
+from pox.lib.packet import ethernet, arp  # Make sure you import the arp module correctly
 
 log = core.getLogger()
 
@@ -34,7 +34,7 @@ class LoadBalancer (object):
                 server_mac = MACS[server_ip]
 
                 # Create ARP reply
-                arp_reply = arp()
+                arp_reply = arp.arp()  # Create the ARP object explicitly using arp.arp()
                 arp_reply.hwsrc = server_mac
                 arp_reply.hwdst = packet.payload.protosrc  # Source MAC address of the ARP request
                 arp_reply.opcode = arp.REPLY
@@ -42,7 +42,7 @@ class LoadBalancer (object):
                 arp_reply.protodst = packet.payload.protosrc  # Source IP address of the ARP request
 
                 # Wrap the ARP reply in an Ethernet frame
-                ethernet_reply = ethernet()
+                ethernet_reply = ethernet.ethernet()  # Create an Ethernet frame explicitly using ethernet.ethernet()
                 ethernet_reply.src = server_mac
                 ethernet_reply.dst = packet.src
                 ethernet_reply.type = ethernet.ARP_TYPE
