@@ -20,12 +20,20 @@ SERVER_PORTS = {
     IPAddr("10.0.0.6"): 6   # Port for h6
 }
 server_index = 0  # Round-robin tracking for servers
+installed_flows = set()  # Track installed flows
 
 class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("Load balancer initialized.")
+        log.info("5:06 Load balancer initialized.")
+        self.add_default_drop_rule()
+
+    def add_default_drop_rule(self):
+        msg = of.ofp_flow_mod()
+        msg.priority = 1
+        self.connection.send(msg)
+        log.info("Installed default drop rule.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
@@ -34,6 +42,11 @@ class LoadBalancer(object):
 
         if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
             self.handle_arp_request(packet, event)
+        elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == 1:  # ICMP
+            log.info(f"Handling ICMP packet from {packet.payload.srcip} to {packet.payload.dstip}")
+            msg = of.ofp_packet_out(data=event.ofp)
+            msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
+            self.connection.send(msg)
 
     def handle_arp_request(self, packet, event):
         global server_index
@@ -99,13 +112,19 @@ class LoadBalancer(object):
             self.connection.send(msg)
             log.info(f"Replied to server {arp_payload.protosrc}'s ARP request for client IP {client_ip}")
 
-            # Forward any buffered packets from the server to client
+            # Forward pending packets from the server to client
             msg = of.ofp_packet_out(data=event.ofp)
             msg.actions.append(of.ofp_action_output(port=client_port))
             self.connection.send(msg)
             log.info(f"Forwarded pending packet from server {arp_payload.protosrc} to client {client_ip}")
 
     def install_flow_rules(self, client_port, client_mac, server_ip, server_mac, server_port, client_ip):
+        global installed_flows
+
+        if (client_port, server_ip) in installed_flows:
+            log.info(f"Flow from client port {client_port} to server {server_ip} already installed. Skipping.")
+            return
+
         # Client to server flow
         match = of.ofp_match()
         match.in_port = client_port
@@ -114,6 +133,8 @@ class LoadBalancer(object):
 
         msg = of.ofp_flow_mod()
         msg.match = match
+        msg.idle_timeout = 30
+        msg.hard_timeout = 60
         msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
         msg.actions.append(of.ofp_action_output(port=server_port))
@@ -125,10 +146,12 @@ class LoadBalancer(object):
         match.in_port = server_port
         match.dl_type = 0x0800
         match.nw_src = server_ip
-        match.nw_dst = client_ip  # Now using IP, not MAC
+        match.nw_dst = client_ip
 
         msg = of.ofp_flow_mod()
         msg.match = match
+        msg.idle_timeout = 30
+        msg.hard_timeout = 60
         msg.actions.append(of.ofp_action_dl_addr.set_src(server_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
         msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
@@ -136,7 +159,7 @@ class LoadBalancer(object):
         self.connection.send(msg)
         log.info(f"Installed server-to-client flow: server {server_ip} -> client IP {client_ip}.")
 
-
+        installed_flows.add((client_port, server_ip))
 
 def launch():
     def start_switch(event):
