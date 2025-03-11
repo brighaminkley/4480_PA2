@@ -26,14 +26,14 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("5:36 Load balancer initialized.")
+        log.info("5:46 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
 
         ETH_TYPE_IPV6 = 0x86DD
 
-        if packet.type == ETH_TYPE_IPV6: # Don't care for IPv6
+        if packet.type == ETH_TYPE_IPV6:  # Ignore IPv6 packets
             return
 
         if not packet:
@@ -58,8 +58,9 @@ class LoadBalancer(object):
 
                 client_ip = packet.payload.protosrc
                 client_mac = packet.src
+                client_port = event.port  # ✅ Get client port from the event!
 
-                log.info(f"Assigning server {server_ip} to client {client_ip}")
+                log.info(f"Assigning server {server_ip} to client {client_ip} on port {client_port}")
 
                 # Send ARP reply (server MAC -> client MAC)
                 arp_reply = arp()
@@ -77,17 +78,12 @@ class LoadBalancer(object):
 
                 msg = of.ofp_packet_out()
                 msg.data = ethernet_reply.pack()
-                actions = [
-                    of.ofp_action_dl_addr.set_src(server_mac),  # Set source MAC (server's MAC)
-                    of.ofp_action_nw_addr.set_src(VIRTUAL_IP),  # Set source IP to virtual IP
-                    of.ofp_action_dl_addr.set_dst(client_mac),  # Set destination MAC (client's MAC)
-                    of.ofp_action_output(port=client_port)      # Send packet to client
-                ]
+                msg.actions.append(of.ofp_action_output(port=client_port))  # ✅ Now client_port is set!
                 self.connection.send(msg)
                 log.info(f"Sent ARP reply with MAC {server_mac} for virtual IP {VIRTUAL_IP}")
 
                 # Install flows for both client-to-server and server-to-client communication
-                self.install_flow_rules(event.port, client_mac, client_ip, server_ip, server_mac, server_port)
+                self.install_flow_rules(client_port, client_mac, client_ip, server_ip, server_mac, server_port)
 
             # Server requesting a client's MAC address
             elif packet.payload.protosrc in SERVERS:
@@ -131,6 +127,7 @@ class LoadBalancer(object):
 
         else:
             log.warning(f"Unhandled packet type: {packet.type}")
+
 
 
     def install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac, server_port):
