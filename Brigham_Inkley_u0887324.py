@@ -15,7 +15,7 @@ MACS = {
     IPAddr("10.0.0.5"): EthAddr("00:00:00:00:00:05"),
     IPAddr("10.0.0.6"): EthAddr("00:00:00:00:00:06")
 }
-SERVER_PORTS = {  # ✅ Manually map server IPs to switch ports
+SERVER_PORTS = {
     IPAddr("10.0.0.5"): 5,  # Port for h5
     IPAddr("10.0.0.6"): 6   # Port for h6
 }
@@ -44,7 +44,7 @@ class LoadBalancer(object):
             if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
                 log.info("Intercepted ARP request for virtual IP")
 
-                server_ip = SERVERS[server_index]
+                server_ip = IPAddr(SERVERS[server_index])
                 server_mac = MACS[server_ip]
 
                 # ✅ Create ARP reply
@@ -78,7 +78,12 @@ class LoadBalancer(object):
 
     def install_flow(self, client_port, server_ip, server_mac, packet):
         try:
-            server_port = SERVER_PORTS[server_ip]  # ✅ Get the correct switch port
+            log.info(f"SERVER_PORTS dictionary: {SERVER_PORTS}")
+            log.info(f"Trying to access SERVER_PORTS[{server_ip}]")
+            server_port = SERVER_PORTS.get(IPAddr(server_ip), None)
+            if server_port is None:
+                log.error(f"Error: server_ip {server_ip} not found in SERVER_PORTS!")
+                return
 
             # ✅ Install client-to-server flow
             log.info("Installing client-to-server flow:")
