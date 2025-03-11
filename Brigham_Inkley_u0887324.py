@@ -30,10 +30,12 @@ class LoadBalancer(object):
                 log.info("Intercepted ARP request for virtual IP")
 
                 # Round-robin to choose which server to respond with
+                log.info("THIS is line 33")
                 server_ip = SERVERS[server_index]
                 server_mac = MACS[server_ip]
 
                 # Create ARP reply (use arp() to create an ARP packet)
+                log.info("Right before arp() creation")
                 arp_reply = arp()  # Create ARP packet using arp() constructor
                 arp_reply.hwsrc = server_mac  # Set the source MAC address of the server
                 arp_reply.hwdst = packet.src  # Set the destination MAC address (from the ARP request)
