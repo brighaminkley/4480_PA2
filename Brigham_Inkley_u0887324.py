@@ -38,60 +38,60 @@ class LoadBalancer(object):
     def handle_arp_request(self, packet, event):
         global server_index
 
-        if packet.payload.protodst != VIRTUAL_IP:
-            return
-        
-        if packet.payload.protosrc in SERVERS and packet.payload.protodst not in SERVERS:
-            log.info(f"Intercepted ARP request from server {packet.payload.protosrc} looking for client {packet.payload.protodst}")
+        arp_payload = packet.payload
+
+        if arp_payload.protodst == VIRTUAL_IP:  # Client is requesting the virtual IP
+            server_ip = SERVERS[server_index]
+            server_mac = MACS[server_ip]
+            server_port = SERVER_PORTS[server_ip]
+            server_index = (server_index + 1) % len(SERVERS)
 
             arp_reply = arp()
-            arp_reply.hwsrc = packet.dst  # Virtual IP MAC
+            arp_reply.hwsrc = server_mac
             arp_reply.hwdst = packet.src
             arp_reply.opcode = arp.REPLY
-            arp_reply.protosrc = packet.payload.protodst
-            arp_reply.protodst = packet.payload.protosrc
+            arp_reply.protosrc = VIRTUAL_IP
+            arp_reply.protodst = arp_payload.protosrc
 
             ethernet_reply = ethernet()
             ethernet_reply.type = ethernet.ARP_TYPE
             ethernet_reply.dst = packet.src
-            ethernet_reply.src = packet.dst
+            ethernet_reply.src = server_mac
             ethernet_reply.payload = arp_reply
 
             msg = of.ofp_packet_out()
             msg.data = ethernet_reply.pack()
             msg.actions.append(of.ofp_action_output(port=event.port))
             self.connection.send(msg)
+            log.info(f"Sent ARP reply with MAC {server_mac} for virtual IP {VIRTUAL_IP}.")
 
-            log.info(f"Replied to server {packet.payload.protosrc}'s ARP request for client {packet.payload.protodst}")
+            # Install flow rules
+            self.install_flow_rules(event.port, packet.src, server_ip, server_mac, server_port, IPAddr(arp_payload.protosrc))
 
-        # Select server using round-robin
-        server_ip = SERVERS[server_index]
-        server_mac = MACS[server_ip]
-        server_port = SERVER_PORTS[server_ip]
-        server_index = (server_index + 1) % len(SERVERS)
+        elif arp_payload.protosrc in SERVERS:  # Server is requesting a client's MAC
+            client_ip = arp_payload.protodst
+            client_mac = packet.src
+            client_port = event.port
 
-        # ARP reply
-        arp_reply = arp()
-        arp_reply.hwsrc = server_mac
-        arp_reply.hwdst = packet.src
-        arp_reply.opcode = arp.REPLY
-        arp_reply.protosrc = VIRTUAL_IP
-        arp_reply.protodst = packet.payload.protosrc
+            arp_reply = arp()
+            arp_reply.hwsrc = client_mac
+            arp_reply.hwdst = packet.src
+            arp_reply.opcode = arp.REPLY
+            arp_reply.protosrc = client_ip
+            arp_reply.protodst = arp_payload.protosrc
 
-        ethernet_reply = ethernet()
-        ethernet_reply.type = ethernet.ARP_TYPE
-        ethernet_reply.dst = packet.src
-        ethernet_reply.src = server_mac
-        ethernet_reply.payload = arp_reply
+            ethernet_reply = ethernet()
+            ethernet_reply.type = ethernet.ARP_TYPE
+            ethernet_reply.dst = packet.src
+            ethernet_reply.src = client_mac
+            ethernet_reply.payload = arp_reply
 
-        msg = of.ofp_packet_out()
-        msg.data = ethernet_reply.pack()
-        msg.actions.append(of.ofp_action_output(port=event.port))
-        self.connection.send(msg)
-        log.info(f"Sent ARP reply with MAC {server_mac} for virtual IP {VIRTUAL_IP}.")
+            msg = of.ofp_packet_out()
+            msg.data = ethernet_reply.pack()
+            msg.actions.append(of.ofp_action_output(port=event.port))
+            self.connection.send(msg)
+            log.info(f"Replied to server {arp_payload.protosrc}'s ARP request for client IP {client_ip}")
 
-        # Install flow rules
-        self.install_flow_rules(event.port, packet.src, server_ip, server_mac, server_port, IPAddr(packet.payload.protosrc))
 
 
     def install_flow_rules(self, client_port, client_mac, server_ip, server_mac, server_port, client_ip):
