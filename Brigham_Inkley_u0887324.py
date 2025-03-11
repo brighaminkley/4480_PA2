@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("5:51 Load balancer initialized.")
+        log.info("5:57 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
@@ -112,18 +112,29 @@ class LoadBalancer(object):
                 self.connection.send(msg)
                 log.info(f"Replied to server {server_ip}'s ARP request for client {client_ip}")
 
-        # Handle IP packets (ICMP pings, for example)
+        # Handle IP packets (ICMP pings)
         elif packet.type == ethernet.IP_TYPE:
             src_ip = packet.payload.srcip
             dst_ip = packet.payload.dstip
 
             log.info(f"Handling IP packet from {src_ip} to {dst_ip}")
 
-            # Drop unmatched IP packets — no more flooding
-            log.warning("Dropping unmatched IP packet (to avoid unnecessary flooding).")
+            # Allow ICMP packets (pings) through while installing flows
+            if packet.payload.protocol == packet.payload.ICMP_PROTOCOL:
+                log.info("Processing ICMP ping request")
+
+                msg = of.ofp_packet_out()
+                msg.data = event.ofp
+                msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
+                self.connection.send(msg)
+                log.info("Flooded ICMP packet to let the ping through")
+
+            else:
+                log.warning("Dropping unmatched non-ICMP IP packet")
 
         else:
             log.warning(f"Unhandled packet type: {packet.type}")
+
 
 
 
