@@ -40,12 +40,13 @@ class LoadBalancer(object):
 
         arp_payload = packet.payload
 
-        if arp_payload.protodst == VIRTUAL_IP:  # Client is requesting the virtual IP
+        if arp_payload.protodst == VIRTUAL_IP:  # Client requests virtual IP
             server_ip = SERVERS[server_index]
             server_mac = MACS[server_ip]
             server_port = SERVER_PORTS[server_ip]
             server_index = (server_index + 1) % len(SERVERS)
 
+            # Send ARP reply
             arp_reply = arp()
             arp_reply.hwsrc = server_mac
             arp_reply.hwdst = packet.src
@@ -68,7 +69,13 @@ class LoadBalancer(object):
             # Install flow rules
             self.install_flow_rules(event.port, packet.src, server_ip, server_mac, server_port, IPAddr(arp_payload.protosrc))
 
-        elif arp_payload.protosrc in SERVERS:  # Server is requesting a client's MAC
+            # Forward pending packets after flow installation
+            msg = of.ofp_packet_out(data=event.ofp)
+            msg.actions.append(of.ofp_action_output(port=server_port))
+            self.connection.send(msg)
+            log.info(f"Forwarded pending packet from client {arp_payload.protosrc} to server {server_ip}")
+
+        elif arp_payload.protosrc in SERVERS:  # Server requests client MAC
             client_ip = arp_payload.protodst
             client_mac = packet.src
             client_port = event.port
@@ -92,7 +99,11 @@ class LoadBalancer(object):
             self.connection.send(msg)
             log.info(f"Replied to server {arp_payload.protosrc}'s ARP request for client IP {client_ip}")
 
-
+            # Forward any buffered packets from the server to client
+            msg = of.ofp_packet_out(data=event.ofp)
+            msg.actions.append(of.ofp_action_output(port=client_port))
+            self.connection.send(msg)
+            log.info(f"Forwarded pending packet from server {arp_payload.protosrc} to client {client_ip}")
 
     def install_flow_rules(self, client_port, client_mac, server_ip, server_mac, server_port, client_ip):
         # Client to server flow
