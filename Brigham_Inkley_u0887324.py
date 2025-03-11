@@ -26,14 +26,42 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("5:06 Load balancer initialized.")
+        log.info("5:10 Load balancer initialized.")
+
+        # Install base rules
+        self.install_arp_rule()
+        self.install_icmp_flood_rule()
         self.add_default_drop_rule()
 
     def add_default_drop_rule(self):
+        # Low-priority rule to drop unmatched traffic
         msg = of.ofp_flow_mod()
-        msg.priority = 1
+        msg.priority = 0
         self.connection.send(msg)
         log.info("Installed default drop rule.")
+
+    def install_arp_rule(self):
+        # High-priority rule to allow ARP requests/replies
+        msg = of.ofp_flow_mod()
+        msg.priority = 100
+        match = of.ofp_match()
+        match.dl_type = 0x0806  # ARP
+        msg.match = match
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
+        self.connection.send(msg)
+        log.info("Installed ARP rule to allow ARP traffic.")
+
+    def install_icmp_flood_rule(self):
+        # Rule to flood ICMP traffic (ping) initially
+        msg = of.ofp_flow_mod()
+        msg.priority = 50
+        match = of.ofp_match()
+        match.dl_type = 0x0800  # IP
+        match.nw_proto = 1  # ICMP
+        msg.match = match
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
+        self.connection.send(msg)
+        log.info("Installed ICMP flood rule to handle initial ping traffic.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
