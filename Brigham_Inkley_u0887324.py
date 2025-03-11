@@ -29,7 +29,7 @@ class LoadBalancer(object):
             log.info(f"Packet details: {packet}")
 
             # Check if the packet is an ARP request for the virtual IP
-            if packet.type == ethernet.ARP_TYPE and packet.payload.protodst == VIRTUAL_IP:
+            if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
                 log.info("Intercepted ARP request for virtual IP")
 
                 # Round-robin to choose which server to respond with
