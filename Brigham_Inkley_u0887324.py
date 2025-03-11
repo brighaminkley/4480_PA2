@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("Load balancer initialized.")
+        log.info("5:19 Load balancer initialized.")
 
         # Install base rules
         self.install_arp_rule()
