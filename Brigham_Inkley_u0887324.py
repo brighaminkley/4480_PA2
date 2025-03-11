@@ -21,6 +21,10 @@ class LoadBalancer(object):
         connection.addListeners(self)
 
     def _handle_PacketIn(self, event):
+        if packet.type == 34525:  # Drop IPv6 packets
+            log.info("Ignoring IPv6 packet")
+            return
+        
         try:
             global server_index
             packet = event.parsed
@@ -68,10 +72,9 @@ class LoadBalancer(object):
             log.error(f"Error handling PacketIn event: {e}")
 
     def install_flow(self, client_port, server_ip, server_mac, packet):
-        # Install client-to-server flow
         log.info("Installing client-to-server flow:")
         log.info(f"  Match: in_port={client_port}, dl_type=0x0800, nw_dst={VIRTUAL_IP}")
-        log.info(f"  Actions: set_dst(mac)={server_mac}, set_dst(ip)={server_ip}, output={self.connection.ports[server_ip]}")
+        log.info(f"  Actions: set_dst(mac)={server_mac}, set_dst(ip)={server_ip}, output={client_port}")
 
         msg_client_to_server = of.ofp_flow_mod()
         msg_client_to_server.match.dl_type = 0x0800  # Match IPv4 traffic
@@ -80,23 +83,23 @@ class LoadBalancer(object):
 
         msg_client_to_server.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         msg_client_to_server.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        msg_client_to_server.actions.append(of.ofp_action_output(port=self.connection.ports[server_ip]))
+        msg_client_to_server.actions.append(of.ofp_action_output(port=client_port))  # ✅ Use `client_port`
         self.connection.send(msg_client_to_server)
 
-        # Install server-to-client flow
+        # Server-to-client flow
         log.info("Installing server-to-client flow:")
-        log.info(f"  Match: in_port={self.connection.ports[server_ip]}, dl_type=0x0800, nw_src={server_ip}, nw_dst={packet.payload.protosrc}")
+        log.info(f"  Match: in_port={client_port}, dl_type=0x0800, nw_src={server_ip}, nw_dst={packet.payload.protosrc}")
         log.info(f"  Actions: set_src(ip)={VIRTUAL_IP}, set_src(mac)={server_mac}, output={client_port}")
 
         msg_server_to_client = of.ofp_flow_mod()
         msg_server_to_client.match.dl_type = 0x0800  # Match IPv4 traffic
         msg_server_to_client.match.nw_src = server_ip  # Match the server's IP
         msg_server_to_client.match.nw_dst = packet.payload.protosrc  # Match the client's IP
-        msg_server_to_client.match.in_port = self.connection.ports[server_ip]  # Match server port
+        msg_server_to_client.match.in_port = client_port  # ✅ Use `client_port`
 
         msg_server_to_client.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
         msg_server_to_client.actions.append(of.ofp_action_dl_addr.set_src(server_mac))
-        msg_server_to_client.actions.append(of.ofp_action_output(port=client_port))
+        msg_server_to_client.actions.append(of.ofp_action_output(port=client_port))  # ✅ Use `client_port`
         self.connection.send(msg_server_to_client)
 
 def launch():
