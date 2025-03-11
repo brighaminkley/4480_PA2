@@ -29,7 +29,7 @@ class LoadBalancer(object):
             log.info(f"Packet details: {packet}")
 
             # Check if the packet is an ARP request for the virtual IP
-            if packet.type == packet.ARP_TYPE and packet.payload.protodst == VIRTUAL_IP:
+            if packet.type == ethernet.ARP_TYPE and packet.payload.protodst == VIRTUAL_IP:
                 log.info("Intercepted ARP request for virtual IP")
 
                 # Round-robin to choose which server to respond with
@@ -47,15 +47,15 @@ class LoadBalancer(object):
                 arp_reply.protodst = packet.payload.protosrc  # Set the destination IP address (requester's IP)
 
                 # Create the Ethernet frame and set its payload as the ARP reply
-                ether = ethernet()  # Create an Ethernet frame
-                ether.type = ethernet.ARP_TYPE  # Set Ethernet type to ARP
-                ether.dst = packet.src  # Set destination MAC address (from ARP request)
-                ether.src = server_mac  # Set source MAC address of the server
-                ether.payload = arp_reply  # Attach the ARP reply as the payload
+                ethernet_reply = ethernet()  # Create an Ethernet frame
+                ethernet_reply.type = ethernet.ARP_TYPE  # Set Ethernet type to ARP
+                ethernet_reply.dst = packet.src  # Set destination MAC address (from ARP request)
+                ethernet_reply.src = server_mac  # Set source MAC address of the server
+                ethernet_reply.payload = arp_reply  # Attach the ARP reply as the payload
 
                 # Send ARP reply to the switch
                 msg = of.ofp_packet_out()
-                msg.data = ether.pack()  # Pack the Ethernet frame with ARP payload
+                msg.data = ethernet_reply.pack()  # Pack the Ethernet frame with ARP payload
                 msg.actions.append(of.ofp_action_output(port=event.port))  # Output the packet to the correct port
                 self.connection.send(msg)
 
@@ -64,7 +64,7 @@ class LoadBalancer(object):
 
                 # Install client-to-server and server-to-client flows
                 self.install_flow(event.port, server_ip, server_mac, packet)
-        
+
         except Exception as e:
             log.error(f"Error handling PacketIn event: {e}")
 
