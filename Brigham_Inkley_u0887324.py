@@ -25,6 +25,9 @@ class LoadBalancer(object):
             global server_index
             packet = event.parsed
 
+            log.info(f"Packet type: {packet.type}")
+            log.info(f"Packet details: {packet}")
+
             # Check if the packet is an ARP request for the virtual IP
             if packet.type == packet.ARP_TYPE and packet.payload.protodst == VIRTUAL_IP:
                 log.info("Intercepted ARP request for virtual IP")
