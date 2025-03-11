@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("5:46 Load balancer initialized.")
+        log.info("5:51 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
@@ -44,9 +44,13 @@ class LoadBalancer(object):
         log.info(f"PacketIn received: {packet}")
         log.info(f"Packet type: {packet.type}")
 
-        # Handle ARP requests (from clients or servers)
+        # Handle ARP requests (clients asking for VIP or servers asking for client MAC)
         if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
             log.info("Intercepted ARP request")
+
+            client_ip = packet.payload.protosrc
+            client_mac = packet.src
+            client_port = event.port
 
             # Client requesting the virtual IP (10.0.0.10)
             if packet.payload.protodst == VIRTUAL_IP:
@@ -55,10 +59,6 @@ class LoadBalancer(object):
                 server_mac = MACS[server_ip]
                 server_port = SERVER_PORTS[server_ip]
                 server_index = (server_index + 1) % len(SERVERS)
-
-                client_ip = packet.payload.protosrc
-                client_mac = packet.src
-                client_port = event.port  # ✅ Get client port from the event!
 
                 log.info(f"Assigning server {server_ip} to client {client_ip} on port {client_port}")
 
@@ -78,19 +78,17 @@ class LoadBalancer(object):
 
                 msg = of.ofp_packet_out()
                 msg.data = ethernet_reply.pack()
-                msg.actions.append(of.ofp_action_output(port=client_port))  # ✅ Now client_port is set!
+                msg.actions.append(of.ofp_action_output(port=client_port))
                 self.connection.send(msg)
                 log.info(f"Sent ARP reply with MAC {server_mac} for virtual IP {VIRTUAL_IP}")
 
-                # Install flows for both client-to-server and server-to-client communication
+                # Install client-to-server and server-to-client flows
                 self.install_flow_rules(client_port, client_mac, client_ip, server_ip, server_mac, server_port)
 
-            # Server requesting a client's MAC address
+            # Server requesting a client's MAC address (to reply to pings)
             elif packet.payload.protosrc in SERVERS:
                 server_ip = packet.payload.protosrc
                 client_ip = packet.payload.protodst
-                client_mac = packet.src
-                client_port = event.port
 
                 log.info(f"Server {server_ip} is requesting MAC for client {client_ip}")
 
@@ -114,19 +112,19 @@ class LoadBalancer(object):
                 self.connection.send(msg)
                 log.info(f"Replied to server {server_ip}'s ARP request for client {client_ip}")
 
-        # Handle IP packets (ICMP for ping)
+        # Handle IP packets (ICMP pings, for example)
         elif packet.type == ethernet.IP_TYPE:
-            log.info(f"Handling IP packet from {packet.payload.srcip} to {packet.payload.dstip}")
+            src_ip = packet.payload.srcip
+            dst_ip = packet.payload.dstip
 
-            # Optional: Flood unmatched IP packets (for debugging)
-            msg = of.ofp_packet_out()
-            msg.data = event.ofp
-            msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
-            self.connection.send(msg)
-            log.info("Flooded unmatched IP packet.")
+            log.info(f"Handling IP packet from {src_ip} to {dst_ip}")
+
+            # Drop unmatched IP packets — no more flooding
+            log.warning("Dropping unmatched IP packet (to avoid unnecessary flooding).")
 
         else:
             log.warning(f"Unhandled packet type: {packet.type}")
+
 
 
 
@@ -142,9 +140,11 @@ class LoadBalancer(object):
         match.nw_dst = VIRTUAL_IP
 
         actions = [
-            of.ofp_action_dl_addr.set_dst(server_mac),
-            of.ofp_action_nw_addr.set_dst(server_ip),
-            of.ofp_action_output(port=server_port)
+            of.ofp_action_dl_addr.set_src(server_mac),          # Server's MAC
+            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),          # Pretend to be virtual IP
+            of.ofp_action_dl_addr.set_dst(client_mac),          # Client's MAC
+            of.ofp_action_nw_addr.set_dst(client_ip),           # Ensure replies go back to client IP (through LB)
+            of.ofp_action_output(port=client_port)              # Send to client
         ]
 
         msg = of.ofp_flow_mod()
