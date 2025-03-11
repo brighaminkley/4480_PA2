@@ -34,7 +34,6 @@ class LoadBalancer(object):
         ETH_TYPE_IPV6 = 0x86DD
 
         if packet.type == ETH_TYPE_IPV6: # Don't care for IPv6
-            log.info("Ignoring IPv6 packet.")
             return
 
         if not packet:
@@ -78,7 +77,12 @@ class LoadBalancer(object):
 
                 msg = of.ofp_packet_out()
                 msg.data = ethernet_reply.pack()
-                msg.actions.append(of.ofp_action_output(port=event.port))
+                actions = [
+                    of.ofp_action_dl_addr.set_src(server_mac),  # Set source MAC (server's MAC)
+                    of.ofp_action_nw_addr.set_src(VIRTUAL_IP),  # Set source IP to virtual IP
+                    of.ofp_action_dl_addr.set_dst(client_mac),  # Set destination MAC (client's MAC)
+                    of.ofp_action_output(port=client_port)      # Send packet to client
+                ]
                 self.connection.send(msg)
                 log.info(f"Sent ARP reply with MAC {server_mac} for virtual IP {VIRTUAL_IP}")
 
@@ -152,16 +156,15 @@ class LoadBalancer(object):
         self.connection.send(msg)
         log.info(f"Installed client-to-server flow: client port {client_port} -> server {server_ip}.")
 
-        # Server-to-client flow
         match = of.ofp_match()
         match.in_port = server_port
         match.dl_type = 0x0800  # IP
         match.nw_src = server_ip
-        match.nw_dst = client_ip  # FIXED: Use the client's IP, not MAC
+        match.nw_dst = client_ip  # Ensure it's the client's IP!
 
         actions = [
             of.ofp_action_dl_addr.set_src(server_mac),
-            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),
+            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),  # Rewrite the source IP
             of.ofp_action_dl_addr.set_dst(client_mac),
             of.ofp_action_output(port=client_port)
         ]
