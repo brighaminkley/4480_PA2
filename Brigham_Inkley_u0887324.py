@@ -4,7 +4,7 @@
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.addresses import IPAddr, EthAddr
-from pox.lib.packet import ethernet, arp  # Make sure you import the arp module correctly
+from pox.lib.packet import ethernet, arp
 
 log = core.getLogger()
 
@@ -15,7 +15,7 @@ MACS = {IPAddr("10.0.0.5"): EthAddr("00:00:00:00:00:05"),
         IPAddr("10.0.0.6"): EthAddr("00:00:00:00:00:06")}
 server_index = 0  # Tracks which server to assign next
 
-class LoadBalancer (object):
+class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
@@ -28,30 +28,30 @@ class LoadBalancer (object):
             # Check if the packet is an ARP request for the virtual IP
             if packet.type == packet.ARP_TYPE and packet.payload.protodst == VIRTUAL_IP:
                 log.info("Intercepted ARP request for virtual IP")
-                
+
                 # Round-robin to choose which server to respond with
                 server_ip = SERVERS[server_index]
                 server_mac = MACS[server_ip]
 
-                # Create ARP reply
-                arp_reply = arp.arp()  # Create the ARP object explicitly using arp.arp()
-                arp_reply.hwsrc = server_mac
-                arp_reply.hwdst = packet.payload.protosrc  # Source MAC address of the ARP request
-                arp_reply.opcode = arp.REPLY
-                arp_reply.protosrc = VIRTUAL_IP
-                arp_reply.protodst = packet.payload.protosrc  # Source IP address of the ARP request
+                # Create ARP reply (use arp() to create an ARP packet)
+                arp_reply = arp()  # Create ARP packet using arp() constructor
+                arp_reply.hwsrc = server_mac  # Set the source MAC address of the server
+                arp_reply.hwdst = packet.src  # Set the destination MAC address (from the ARP request)
+                arp_reply.opcode = arp.REPLY  # Set ARP reply opcode
+                arp_reply.protosrc = VIRTUAL_IP  # Set the source IP address (virtual IP)
+                arp_reply.protodst = packet.payload.protosrc  # Set the destination IP address (requester's IP)
 
-                # Wrap the ARP reply in an Ethernet frame
-                ethernet_reply = ethernet.ethernet()  # Create an Ethernet frame explicitly using ethernet.ethernet()
-                ethernet_reply.src = server_mac
-                ethernet_reply.dst = packet.src
-                ethernet_reply.type = ethernet.ARP_TYPE
-                ethernet_reply.payload = arp_reply
+                # Create the Ethernet frame and set its payload as the ARP reply
+                ether = ethernet()  # Create an Ethernet frame
+                ether.type = ethernet.ARP_TYPE  # Set Ethernet type to ARP
+                ether.dst = packet.src  # Set destination MAC address (from ARP request)
+                ether.src = server_mac  # Set source MAC address of the server
+                ether.payload = arp_reply  # Attach the ARP reply as the payload
 
-                # Send ARP reply
+                # Send ARP reply to the switch
                 msg = of.ofp_packet_out()
-                msg.data = ethernet_reply.pack()
-                msg.actions.append(of.ofp_action_output(port=event.port))
+                msg.data = ether.pack()  # Pack the Ethernet frame with ARP payload
+                msg.actions.append(of.ofp_action_output(port=event.port))  # Output the packet to the correct port
                 self.connection.send(msg)
 
                 # Rotate server for round-robin balancing
@@ -62,7 +62,6 @@ class LoadBalancer (object):
         
         except Exception as e:
             log.error(f"Error handling PacketIn event: {e}")
-        
 
     def install_flow(self, client_port, server_ip, server_mac, packet):
         # Install client-to-server flow
