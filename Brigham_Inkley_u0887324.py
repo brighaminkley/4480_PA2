@@ -32,17 +32,9 @@ class LoadBalancer(object):
             global server_index
             packet = event.parsed
 
-            # ✅ Ignore IPv6 packets
-            if packet.type == 34525:
-                log.info("Ignoring IPv6 packet")
-                return
-
-            log.info(f"Packet type: {packet.type}")
-            log.info(f"Packet details: {packet}")
-
-            # ✅ Handle ARP Requests
+            #Handle ARP Requests
             if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
-                log.info("Intercepted ARP request for virtual IP")
+                log.info("TAKE 1: Intercepted ARP request for virtual IP")
 
                 server_ip = IPAddr(SERVERS[server_index])
                 server_mac = MACS[server_ip]
