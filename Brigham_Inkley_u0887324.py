@@ -39,19 +39,18 @@ class LoadBalancer(object):
 
                 # Create ARP reply (use arp() to create an ARP packet)
                 log.info("Right before arp() creation")
-                arp_reply = arp()  # Create ARP packet using arp() constructor
-                arp_reply.hwsrc = server_mac  # Set the source MAC address of the server
-                arp_reply.hwdst = packet.src  # Set the destination MAC address (from the ARP request)
-                arp_reply.opcode = arp.REPLY  # Set ARP reply opcode
-                arp_reply.protosrc = VIRTUAL_IP  # Set the source IP address (virtual IP)
-                arp_reply.protodst = packet.payload.protosrc  # Set the destination IP address (requester's IP)
+                arp_reply = arp()
+                arp_reply.hwsrc = server_mac
+                arp_reply.hwdst = packet.src
+                arp_reply.opcode = arp.REPLY
+                arp_reply.protosrc = VIRTUAL_IP
+                arp_reply.protodst = packet.payload.protosrc 
 
-                # Create the Ethernet frame and set its payload as the ARP reply
-                ethernet_reply = ethernet()  # Create an Ethernet frame
-                ethernet_reply.type = ethernet.ARP_TYPE  # Set Ethernet type to ARP
-                ethernet_reply.dst = packet.src  # Set destination MAC address (from ARP request)
-                ethernet_reply.src = server_mac  # Set source MAC address of the server
-                ethernet_reply.payload = arp_reply  # Attach the ARP reply as the payload
+                ethernet_reply = ethernet()
+                ethernet_reply.type = ethernet.ARP_TYPE
+                ethernet_reply.dst = packet.src
+                ethernet_reply.src = server_mac
+                ethernet_reply.payload = arp_reply
 
                 # Send ARP reply to the switch
                 msg = of.ofp_packet_out()
