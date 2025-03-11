@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("5:25 Load balancer initialized.")
+        log.info("5:29 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
