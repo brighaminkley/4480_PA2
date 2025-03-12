@@ -38,6 +38,7 @@ def launch():
 
 
     def handle_arp(packet, port, event_connection):
+        global use_server1
         a = packet.payload
         if a.opcode == arp.REQUEST:  # Check if it's an ARP request
             if a.protodst == IPAddr(VIRTUAL_IP):  # ARP request for virtual IP
