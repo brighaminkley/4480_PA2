@@ -17,6 +17,10 @@ MACS = {
     IPAddr("10.0.0.5"): EthAddr("00:00:00:00:00:05"),
     IPAddr("10.0.0.6"): EthAddr("00:00:00:00:00:06")
 }
+CLIENT_MACS = {
+    IPAddr(f"10.0.0.{i}"): EthAddr(f"00:00:00:00:00:0{i}")
+    for i in range(1,5)  # h1-h4
+}
 SERVER_PORTS = {
     IPAddr("10.0.0.5"): 5,  # Port for h5
     IPAddr("10.0.0.6"): 6    # Port for h6
@@ -27,7 +31,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:23 Load balancer initialized")
+        log.info("10:33 Load balancer initialized")
         self.install_default_flow()
 
     def install_default_flow(self):
@@ -52,17 +56,13 @@ class LoadBalancer(object):
             self._handle_ip(event, packet)
 
     def _handle_arp(self, event, packet):
-        """Handle ARP packets"""
+        log.info("In handle_arp method")
         arp_pkt = packet.payload
-        
         if arp_pkt.opcode == arp.REQUEST:
-            log.info(f"ARP request from {arp_pkt.protosrc} for {arp_pkt.protodst}")
-            
-            # Client asking for virtual IP
+            # Handle requests for virtual IP
             if arp_pkt.protodst == VIRTUAL_IP:
                 self._handle_virtual_ip_arp(event, arp_pkt)
-            
-            # Server asking for client IP
+            # Handle server requests for client IPs
             elif arp_pkt.protodst in CLIENTS and arp_pkt.protosrc in SERVERS:
                 self._handle_server_arp(event, arp_pkt)
 
@@ -100,17 +100,15 @@ class LoadBalancer(object):
         )
 
     def _handle_server_arp(self, event, arp_pkt):
-        """Handle ARP requests from servers to resolve clients"""
         client_ip = arp_pkt.protodst
         server_ip = arp_pkt.protosrc
         
-        # Find client MAC (assuming clients are h1-h4 with sequential MACs)
-        client_mac = EthAddr("00:00:00:00:00:%02x" % int(client_ip.toStr().split('.')[-1]))
-        
-        log.info(f"Server {server_ip} asking for {client_ip}, responding with {client_mac}")
-        
+        if client_ip not in CLIENT_MACS:
+            log.error(f"Unknown client IP {client_ip}")
+            return
+            
         self._send_arp_reply(
-            src_mac=client_mac,
+            src_mac=CLIENT_MACS[client_ip],
             src_ip=client_ip,
             dst_mac=MACS[server_ip],
             dst_ip=server_ip,
@@ -168,7 +166,6 @@ class LoadBalancer(object):
         log.debug(f"Sent ARP reply: {src_ip} -> {dst_ip}")
 
     def _install_client_server_flows(self, client_ip, client_port, server_ip, server_port, server_mac):
-        """Install bidirectional flow rules"""
         # Client -> Server flow
         match = of.ofp_match(
             in_port=client_port,
@@ -184,9 +181,8 @@ class LoadBalancer(object):
             of.ofp_action_output(port=server_port)
         ]
         
-        self._send_flow_mod(match, actions, idle_timeout=20)
-        log.info(f"Installed client->server flow: {client_ip} -> {server_ip}")
-
+        self._send_flow_mod(match, actions)
+        
         # Server -> Client flow
         match = of.ofp_match(
             in_port=server_port,
@@ -202,8 +198,7 @@ class LoadBalancer(object):
             of.ofp_action_output(port=client_port)
         ]
         
-        self._send_flow_mod(match, actions, idle_timeout=20)
-        log.info(f"Installed server->client flow: {server_ip} -> {client_ip}")
+        self._send_flow_mod(match, actions)
 
     def _send_flow_mod(self, match, actions, idle_timeout=10, hard_timeout=60):
         """Helper to create and send flow mods"""
