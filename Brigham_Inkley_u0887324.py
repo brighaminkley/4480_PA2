@@ -27,7 +27,7 @@ def launch():
     def _handle_PacketIn(event):
         packet = event.parsed
         if packet.type == ethernet.ARP_TYPE:
-            handle_arp(packet, packet.in_port, event.connection)
+            handle_arp(packet, event.port, event.connection)
 
     def handle_arp(packet, port, event_connection):
         a = packet.payload
