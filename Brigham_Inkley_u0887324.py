@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:59 Load balancer initialized.")
+        log.info("11:04 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -104,8 +104,8 @@ class LoadBalancer(object):
             # Forward ICMP request to the selected server
             actions = [
                 of.ofp_action_dl_addr.set_dst(server_mac),
-                of.ofp_action_nw_addr.set_dst(selected_server_ip),
-                of.ofp_action_output(port=selected_server_port)
+                of.ofp_action_nw_addr.set_dst(server_ip),
+                of.ofp_action_output(port=server_port)
             ]
 
             msg = of.ofp_flow_mod()
@@ -154,9 +154,9 @@ class LoadBalancer(object):
         match.nw_dst = client_ip
 
         actions = [
-            of.ofp_action_dl_addr.set_src(server_mac),
-            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),
-            of.ofp_action_dl_addr.set_dst(client_mac),
+            of.ofp_action_dl_addr.set_src(VIRTUAL_IP),  
+            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),  
+            of.ofp_action_dl_addr.set_dst(client_mac),  
             of.ofp_action_output(port=client_port)
         ]
 
