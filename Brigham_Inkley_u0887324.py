@@ -87,7 +87,6 @@ class LoadBalancer(object):
         elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == packet.payload.ICMP_PROTOCOL:
             log.info("Processing ICMP ping request")
 
-            global server_index
             server_ip = SERVERS[server_index]
             server_mac = MACS[server_ip]
             server_port = SERVER_PORTS[server_ip]
