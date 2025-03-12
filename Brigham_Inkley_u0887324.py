@@ -16,6 +16,11 @@ SERVERS = [
 ]
 server_index = 0  # Round-robin counter
 
+SERVER_PORTS = {
+    IPAddr("10.0.0.5"): 5,  # Port for h5
+    IPAddr("10.0.0.6"): 6   # Port for h6
+}
+
 class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
@@ -61,14 +66,16 @@ class VirtualIPLoadBalancer:
                 log.info(f"Sent ARP reply with MAC {server['mac']} for {VIRTUAL_IP}.")
 
                 # Install flow rules to forward traffic
-                self._install_flow_rules(event.port, packet.src, packet.payload.protosrc, server)
+                self._install_flow_rules(event.port, packet.src, packet.payload.protosrc, server["ip"], server["mac"])
 
-    def _install_flow_rules(self, client_port, client_mac, client_ip, server):
+    def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """
         Installs OpenFlow rules for load balancing:
         1. Client-to-Server flow
         2. Server-to-Client flow
         """
+
+        server_port = SERVER_PORTS[server_ip]  # Get the correct server port
 
         # Client-to-Server Flow
         msg = of.ofp_flow_mod()
@@ -76,27 +83,30 @@ class VirtualIPLoadBalancer:
         msg.match.nw_dst = VIRTUAL_IP  # Match Virtual IP
         msg.match.in_port = client_port  # Match incoming client port
 
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(server["mac"]))  # Set server MAC
-        msg.actions.append(of.ofp_action_nw_addr.set_dst(server["ip"]))  # Set server IP
-        msg.actions.append(of.ofp_action_output(port=server["ip"]))  # Send to correct server port
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))  # Set server MAC
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))  # Set server IP
+        msg.actions.append(of.ofp_action_output(port=server_port))  # Send to correct server port
         self.connection.send(msg)
 
-        log.info(f"Installed flow: {client_ip} -> {server['ip']}.")
+        log.info(f"✅ Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP}.")
+
+        VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")  # Define a virtual MAC address
 
         # Server-to-Client Flow
         msg = of.ofp_flow_mod()
         msg.match.dl_type = 0x0800
-        msg.match.nw_src = server["ip"]
+        msg.match.nw_src = server_ip
         msg.match.nw_dst = client_ip
-        msg.match.in_port = server["ip"]
+        msg.match.in_port = server_port  # Match correct server port
 
-        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_IP))  # Set Virtual IP
+        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))  # ✅ Correct: Use a valid MAC
         msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))  # Pretend to be Virtual IP
         msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))  # Send to client MAC
         msg.actions.append(of.ofp_action_output(port=client_port))  # Forward to client
         self.connection.send(msg)
 
-        log.info(f"Installed reverse flow: {server['ip']} -> {client_ip} via {VIRTUAL_IP}.")
+        log.info(f"✅ Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP}.")
+
 
 # Start the POX Controller
 def launch():
