@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("11:08 Load balancer initialized.")
+        log.info("11:17 Load balancer initialized.")
 
         msg = of.ofp_flow_mod()
         msg.match = of.ofp_match(dl_type=0x0806)  # ARP
@@ -36,6 +36,7 @@ class LoadBalancer(object):
         log.info("Installed ARP flow rule: Flood ARP requests.")
 
     def _handle_PacketIn(self, event):
+        log.info("PacketIn: Packet received")
         global server_index
         packet = event.parsed
         ETH_TYPE_IPV6 = 0x86DD
