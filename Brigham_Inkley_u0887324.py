@@ -75,18 +75,17 @@ def launch():
 
 
     def install_flow_rules(event_connection, port, target_ip):
-        match_client_to_server.dl_type = 0x0800 
-        match_server_to_client.dl_type = 0x0800
         target_mac = SERVER1_MAC if target_ip == SERVER1_IP else SERVER2_MAC
         # Log flow rule installation
         core.getLogger().info(
             f"Installing flow rules for target_ip={target_ip}, target_mac={target_mac}, port={port}")
 
         # Flow for client to server
-        match_client_to_server = of.ofp_match()
+        match_client_to_server = of.ofp_match()  # Initialize here
         match_client_to_server.in_port = port
         match_client_to_server.dl_dst = EthAddr(target_mac)
         match_client_to_server.nw_dst = IPAddr(VIRTUAL_IP)
+        match_client_to_server.dl_type = 0x0800  # Add this
         action_set_dst_ip = of.ofp_action_nw_addr.set_dst(IPAddr(target_ip))
         action_output_to_server = of.ofp_action_output(
             port=5 if target_ip == SERVER1_IP else 6
@@ -98,11 +97,12 @@ def launch():
         event_connection.send(flow_mod_client_to_server)
 
         # Flow for server to client
-        match_server_to_client = of.ofp_match()
+        match_server_to_client = of.ofp_match()  # Initialize here
         match_server_to_client.in_port = 5 if target_ip == SERVER1_IP else 6
         match_server_to_client.dl_src = EthAddr(target_mac)
         match_server_to_client.nw_src = IPAddr(target_ip)
         match_server_to_client.nw_dst = IPAddr(VIRTUAL_IP)
+        match_server_to_client.dl_type = 0x0800  # Add this
         action_set_src_ip = of.ofp_action_nw_addr.set_src(IPAddr(target_ip))
         action_output_to_client = of.ofp_action_output(port=port)  # Output to client's port
         flow_mod_server_to_client = of.ofp_flow_mod()
