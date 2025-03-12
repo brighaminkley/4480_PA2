@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:57 Load balancer initialized.")
+        log.info("11:04 Load balancer initialized.")
 
         msg = of.ofp_flow_mod()
         msg.match = of.ofp_match(dl_type=0x0806)  # ARP
@@ -163,17 +163,19 @@ class LoadBalancer(object):
         match.nw_dst = client_ip
 
         actions = [
-            of.ofp_action_dl_addr.set_src(server_mac),  
-            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),  
-            of.ofp_action_dl_addr.set_dst(client_mac),  
-            of.ofp_action_output(port=client_port)
+            of.ofp_action_dl_addr.set_src(server_mac),  # Server's MAC as source
+            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),  # Rewrite source IP to virtual IP
+            of.ofp_action_dl_addr.set_dst(client_mac),  # Client's MAC as destination
+            of.ofp_action_output(port=client_port)      # Send packet to client
         ]
 
         msg = of.ofp_flow_mod()
         msg.match = match
         msg.actions = actions
         self.connection.send(msg)
-        log.info(f"Installed server-to-client ICMP flow: {server_ip} -> {client_ip} via {VIRTUAL_IP}")
+
+        log.info(f"Installed server-to-client flow: {server_ip} -> {client_ip} via {VIRTUAL_IP}")
+
 
 
 def launch():
