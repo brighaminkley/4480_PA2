@@ -23,8 +23,11 @@ def launch():
         # Log incoming packet details
         core.getLogger().info(
             f"Received packet: type={packet.type}, src={packet.src}, dst={packet.dst}, in_port={event.port}")
-        # Only handle Ethernet packets
-        if packet.type == ethernet.ETHER_TYPE:
+        # Handle Ethernet packets
+        if packet.type == ethernet.ARP_TYPE:  # Corrected line for ARP
+            # Handle ARP packets here (if needed later)
+            pass
+        elif packet.type == 0x0800:  # Corrected line for IPv4
             dst_mac = packet.dst
             in_port = event.port
             event_connection = event.connection
