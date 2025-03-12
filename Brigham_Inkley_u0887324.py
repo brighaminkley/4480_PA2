@@ -10,7 +10,7 @@ log = core.getLogger()
 
 # Virtual IP and backend servers
 VIRTUAL_IP = IPAddr("10.0.0.10")
-VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")  # Load balancer's "fake" MAC for the virtual IP
+VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")  # Load balancer's "fake" MAC for virtual IP
 SERVERS = [IPAddr("10.0.0.5"), IPAddr("10.0.0.6")]
 MACS = {
     IPAddr("10.0.0.5"): EthAddr("00:00:00:00:00:05"),
@@ -20,14 +20,27 @@ SERVER_PORTS = {
     IPAddr("10.0.0.5"): 5,  # Port for h5
     IPAddr("10.0.0.6"): 6   # Port for h6
 }
-server_index = 0  # Tracks which server to assign next
+server_index = 0  # Round-robin load balancing
 
 
 class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:05 Load balancer initialized.")
+        log.info("10:12 Load balancer initialized.")
+
+        # Install a default rule to log and forward unmatched packets for debugging
+        self.install_default_flow()
+
+    def install_default_flow(self):
+        """
+        Install a default rule to forward unmatched packets for debugging purposes.
+        """
+        msg = of.ofp_flow_mod()
+        msg.match = of.ofp_match()
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
+        self.connection.send(msg)
+        log.info("Installed default flow rule: flooding unmatched packets.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -35,7 +48,7 @@ class LoadBalancer(object):
         packet = event.parsed
         ETH_TYPE_IPV6 = 0x86DD
 
-        if packet.type == ETH_TYPE_IPV6:  # Ignore IPv6 packets
+        if packet.type == ETH_TYPE_IPV6:
             return
 
         if not packet:
@@ -53,7 +66,6 @@ class LoadBalancer(object):
             client_mac = packet.src
             client_port = event.port
 
-            # Client requesting the virtual IP (10.0.0.10)
             if packet.payload.protodst == VIRTUAL_IP:
                 server_ip = SERVERS[server_index]
                 server_mac = MACS[server_ip]
@@ -62,7 +74,6 @@ class LoadBalancer(object):
 
                 log.info(f"Assigning server {server_ip} to client {client_ip} on port {client_port}")
 
-                # Send ARP reply (virtual IP -> client MAC)
                 arp_reply = arp()
                 arp_reply.hwsrc = VIRTUAL_MAC
                 arp_reply.hwdst = client_mac
@@ -82,34 +93,7 @@ class LoadBalancer(object):
                 self.connection.send(msg)
                 log.info(f"Sent ARP reply with MAC {VIRTUAL_MAC} for virtual IP {VIRTUAL_IP}")
 
-                # Install client-to-server and server-to-client flows
                 self.install_flow_rules(client_port, client_mac, client_ip, server_ip, server_mac, server_port)
-
-            # Server requesting the MAC for the virtual IP (10.0.0.10)
-            elif packet.payload.protosrc in SERVERS and packet.payload.protodst == VIRTUAL_IP:
-                server_ip = packet.payload.protosrc
-                log.info(f"Server {server_ip} is requesting MAC for virtual IP {VIRTUAL_IP}")
-
-                # Reply with virtual MAC (the load balancer's MAC)
-                arp_reply = arp()
-                arp_reply.hwsrc = VIRTUAL_MAC
-                arp_reply.hwdst = packet.src
-                arp_reply.opcode = arp.REPLY
-                arp_reply.protosrc = VIRTUAL_IP
-                arp_reply.protodst = server_ip
-
-                ethernet_reply = ethernet()
-                ethernet_reply.type = ethernet.ARP_TYPE
-                ethernet_reply.dst = packet.src
-                ethernet_reply.src = VIRTUAL_MAC
-                ethernet_reply.payload = arp_reply
-
-                msg = of.ofp_packet_out()
-                msg.data = ethernet_reply.pack()
-                msg.actions.append(of.ofp_action_output(port=event.port))
-                self.connection.send(msg)
-
-                log.info(f"Replied to {server_ip}'s ARP request with virtual MAC {VIRTUAL_MAC}.")
 
         # Handle ICMP (ping) packets
         elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == packet.payload.ICMP_PROTOCOL:
@@ -125,7 +109,6 @@ class LoadBalancer(object):
 
             log.info(f"Forwarding ICMP request to {server_ip} on port {server_port}")
 
-            # Forward ICMP request to the selected server
             actions = [
                 of.ofp_action_dl_addr.set_dst(server_mac),
                 of.ofp_action_nw_addr.set_dst(server_ip),
@@ -133,8 +116,8 @@ class LoadBalancer(object):
             ]
 
             match = of.ofp_match()
-            match.dl_type = 0x0800  # IP
-            match.nw_proto = 1      # ICMP
+            match.dl_type = 0x0800
+            match.nw_proto = 1
             match.nw_src = client_ip
             match.nw_dst = VIRTUAL_IP
 
@@ -145,7 +128,7 @@ class LoadBalancer(object):
 
             log.info(f"✅ Installed ICMP flow: client {client_ip} -> server {server_ip}")
 
-            # Install reverse flow for server responses
+            # Reverse flow (server -> client)
             actions = [
                 of.ofp_action_dl_addr.set_src(server_mac),
                 of.ofp_action_nw_addr.set_src(VIRTUAL_IP),
