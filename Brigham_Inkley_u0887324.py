@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("6:13 Load balancer initialized.")
+        log.info("6:23 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
@@ -140,7 +140,27 @@ class LoadBalancer(object):
                     match.nw_src = packet.payload.srcip
                     match.nw_dst = packet.payload.dstip
 
-                    actions = [of.ofp_action_output(port=of.OFPP_FLOOD)]
+                    if packet.payload.protocol == packet.payload.ICMP_PROTOCOL:
+                        log.info("Processing ICMP ping request")
+
+                        # Forward ICMP request to the selected server
+                        actions = [
+                            of.ofp_action_dl_addr.set_dst(server_mac),  # Send to server MAC
+                            of.ofp_action_nw_addr.set_dst(server_ip),   # Send to server IP
+                            of.ofp_action_output(port=server_port)      # Forward to correct port
+                        ]
+
+                        msg = of.ofp_flow_mod()
+                        match = of.ofp_match()
+                        match.dl_type = 0x0800  # IP
+                        match.nw_proto = 1      # ICMP protocol
+                        match.nw_src = packet.payload.srcip
+                        match.nw_dst = VIRTUAL_IP  # The VIP
+                        msg.match = match
+                        msg.actions = actions
+                        self.connection.send(msg)
+
+                        log.info(f"✅ Installed ICMP forwarding rule: {packet.payload.srcip} -> {server_ip}")
 
                     flow_mod = of.ofp_flow_mod()
                     flow_mod.match = match
@@ -195,7 +215,7 @@ class LoadBalancer(object):
         msg.match = match
         msg.actions = actions
         self.connection.send(msg)
-        log.info(f"Fixed server-to-client flow: {server_ip} -> {client_ip}.")
+        log.info(f"Installed server-to-client ICMP flow: {server_ip} -> {client_ip} via {VIRTUAL_IP}")
 
 
 def launch():
