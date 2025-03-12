@@ -2,72 +2,55 @@
 # By Brigham Inkley
 
 from pox.core import core
-from pox.lib.addresses import IPAddr, EthAddr
-from pox.lib.packet import arp, ethernet
 from pox.openflow import ofp
-import time
+from pox.lib.addresses import IPAddr, EthAddr
+from pox.lib.packet import arp, icmp
 
-log = core.getLogger()
-
-# Variables for server IPs and MACs
-server_ips = [IPAddr("10.0.0.5"), IPAddr("10.0.0.6")]
-server_macs = [EthAddr("00:00:00:00:00:05"), EthAddr("00:00:00:00:00:06")]
-round_robin_counter = 0
-
-class VirtualIPLoadBalancer (object):
+class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
+        self.server_ips = [IPAddr("10.0.0.5"), IPAddr("10.0.0.6")]  # Real server IPs
+        self.server_macs = [EthAddr("00:00:00:00:00:01"), EthAddr("00:00:00:00:00:02")]  # Real server MACs
+        self.next_server = 0  # Round-robin index
         self.connection.addListeners(self)
-    
-    def _handle_arp(self, event):
-        packet = event.parsed
-        if isinstance(packet, arp.arp):
-            if packet.opcode == arp.REQUEST and packet.dstip == IPAddr("10.0.0.10"):
-                # Respond to ARP request
-                self.handle_arp_request(event, packet)
 
-    def handle_arp_request(self, event, packet):
-        global round_robin_counter
-        # Select next server based on round robin
-        server_ip = server_ips[round_robin_counter % len(server_ips)]
-        server_mac = server_macs[round_robin_counter % len(server_macs)]
-        
-        # Send ARP reply
-        arp_reply = arp.arp()
-        arp_reply.hwsrc = server_mac
-        arp_reply.hwdst = packet.hwsrc
-        arp_reply.opcode = arp.REPLY
-        arp_reply.protosrc = packet.dstip
-        arp_reply.protodst = packet.srcip
-        
-        ethernet_frame = ethernet.ethernet()
-        ethernet_frame.src = server_mac
-        ethernet_frame.dst = packet.hwsrc
-        ethernet_frame.type = ethernet.ARP_TYPE
-        ethernet_frame.payload = arp_reply
+    def _handle_arp_request(self, msg):
+        # Check if the ARP request is for the virtual IP
+        if msg.parsed.opcode == arp.REQUEST and msg.parsed.protodst == IPAddr("10.0.0.10"):
+            # Select the next server and update round-robin index
+            server_ip = self.server_ips[self.next_server]
+            server_mac = self.server_macs[self.next_server]
+            self.next_server = (self.next_server + 1) % len(self.server_ips)
 
-        self.connection.send(ethernet_frame)
+            # Send ARP response with the server's MAC address
+            arp_response = arp()
+            arp_response.hwsrc = server_mac
+            arp_response.hwdst = msg.src
+            arp_response.opcode = arp.REPLY
+            arp_response.protosrc = msg.protodst
+            arp_response.protodst = msg.protosrc
+            self.connection.send(msg.port, arp_response)
 
-        # Set up flow rule to map the virtual IP to the server
-        self.set_flow_rule(event, packet.src, server_ip, server_mac)
+            # Install flow rules to forward traffic
+            self._install_flow_rule(msg, server_ip, server_mac)
 
-        round_robin_counter += 1
+    def _install_flow_rule(self, msg, server_ip, server_mac):
+        # Create flow rule to forward ICMP traffic
+        flow_mod = ofp.message.flow_add()
+        flow_mod.match.dl_type = 0x0800  # IP
+        flow_mod.match.nw_dst = IPAddr("10.0.0.10")  # Virtual IP
+        flow_mod.match.in_port = msg.port
+        flow_mod.actions.append(ofp.action.set_dl_dst(server_mac))
+        flow_mod.actions.append(ofp.action.output(self.connection.dpid, msg.port))
+        self.connection.send(flow_mod)
 
-    def set_flow_rule(self, event, src_ip, server_ip, server_mac):
-        msg = ofp.ofp_flow_mod()
-        msg.match = ofp.ofp_match()
-        msg.match.nw_dst = server_ip
-        msg.match.in_port = event.port
-        msg.actions.append(ofp.ofp_action_dl_addr(type=ofp.OFPAT_SET_DL_DST, dl_addr=server_mac))
-        msg.actions.append(ofp.ofp_action_nw_addr(type=ofp.OFPAT_SET_NW_DST, nw_addr=server_ip))
-        self.connection.send(msg)
+    def _handle_icmp(self, msg):
+        # Handle ICMP traffic and install reverse flows as needed
+        pass
 
+# Initialize POX controller
 def launch():
-    core.openflow.addListenerByName("ConnectionUp", _handle_ConnectionUp)
-
-def _handle_ConnectionUp(event):
-    log.info("Switch connected: %s", event.connection)
-    VirtualIPLoadBalancer(event.connection)
+    core.openflow.addListenerByName("ConnectionUp", VirtualIPLoadBalancer)
 
 
 # from pox.core import core
