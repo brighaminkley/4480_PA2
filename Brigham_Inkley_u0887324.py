@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("6:03 Load balancer initialized.")
+        log.info("6:09 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
@@ -154,10 +154,6 @@ class LoadBalancer(object):
         else:
             log.warning(f"Unhandled packet type: {packet.type}")
 
-
-
-
-
     def install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac, server_port):
         """
         Install flow rules for client-to-server and server-to-client communication.
@@ -167,41 +163,39 @@ class LoadBalancer(object):
         match = of.ofp_match()
         match.in_port = client_port
         match.dl_type = 0x0800  # IP
-        match.nw_dst = VIRTUAL_IP
+        match.nw_dst = VIRTUAL_IP  # 🔴 This is the problem
 
         actions = [
-            of.ofp_action_dl_addr.set_src(server_mac),          # Server's MAC
-            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),          # Pretend to be virtual IP
-            of.ofp_action_dl_addr.set_dst(client_mac),          # Client's MAC
-            of.ofp_action_nw_addr.set_dst(client_ip),           # Ensure replies go back to client IP (through LB)
-            of.ofp_action_output(port=client_port)              # Send to client
+            of.ofp_action_dl_addr.set_dst(server_mac),  
+            of.ofp_action_nw_addr.set_dst(server_ip),   
+            of.ofp_action_output(port=server_port) 
         ]
 
         msg = of.ofp_flow_mod()
         msg.match = match
         msg.actions = actions
         self.connection.send(msg)
-        log.info(f"Installed client-to-server flow: client port {client_port} -> server {server_ip}.")
+        log.info(f"Fixed client-to-server flow: {client_ip} -> {server_ip}.")
 
+        # Server-to-client flow
         match = of.ofp_match()
         match.in_port = server_port
-        match.dl_type = 0x0800  # IP
-        match.nw_src = server_ip
-        match.nw_dst = client_ip  # Ensure it's the client's IP!
+        match.dl_type = 0x0800  
+        match.nw_src = server_ip 
+        match.nw_dst = client_ip
 
         actions = [
-            of.ofp_action_dl_addr.set_src(server_mac),         # Server's MAC
-            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),         # Pretend response comes from VIP
-            of.ofp_action_dl_addr.set_dst(client_mac),         # Client's MAC
-            of.ofp_action_nw_addr.set_dst(client_ip),          # Ensure packets go back through LB
-            of.ofp_action_output(port=client_port)             # Send to client
+            of.ofp_action_dl_addr.set_src(VIRTUAL_IP),  
+            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),  
+            of.ofp_action_dl_addr.set_dst(client_mac), 
+            of.ofp_action_output(port=client_port)
         ]
 
         msg = of.ofp_flow_mod()
         msg.match = match
         msg.actions = actions
         self.connection.send(msg)
-        log.info(f"Installed server-to-client flow: server {server_ip} -> client IP {client_ip}.")
+        log.info(f"Fixed server-to-client flow: {server_ip} -> {client_ip}.")
 
 
 def launch():
