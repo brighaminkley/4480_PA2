@@ -26,12 +26,15 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:56 Load balancer initialized.")
+        log.info("10:59 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
         packet = event.parsed
         ETH_TYPE_IPV6 = 0x86DD
+        selected_server_ip = SERVERS[0]
+        selected_server_port = SERVER_PORTS[SERVERS[0]]
+
 
         if packet.type == ETH_TYPE_IPV6:  # Ignore IPv6 packets
             return
