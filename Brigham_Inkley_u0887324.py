@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("5:57 Load balancer initialized.")
+        log.info("6:03 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
@@ -123,11 +123,30 @@ class LoadBalancer(object):
             if packet.payload.protocol == packet.payload.ICMP_PROTOCOL:
                 log.info("Processing ICMP ping request")
 
-                msg = of.ofp_packet_out()
-                msg.data = event.ofp
-                msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
-                self.connection.send(msg)
-                log.info("Flooded ICMP packet to let the ping through")
+                if packet.payload.protocol == packet.payload.ICMP_PROTOCOL:
+                    log.info("Processing ICMP ping request")
+
+                    # Allow the current ping to pass through (first packet)
+                    msg = of.ofp_packet_out()
+                    msg.data = event.ofp
+                    msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
+                    self.connection.send(msg)
+                    log.info("Flooded ICMP packet to let the ping through")
+
+                    # Install flow to handle future ICMP traffic
+                    match = of.ofp_match()
+                    match.dl_type = 0x0800  # IP
+                    match.nw_proto = 1       # ICMP protocol
+                    match.nw_src = packet.payload.srcip
+                    match.nw_dst = packet.payload.dstip
+
+                    actions = [of.ofp_action_output(port=of.OFPP_FLOOD)]
+
+                    flow_mod = of.ofp_flow_mod()
+                    flow_mod.match = match
+                    flow_mod.actions = actions
+                    self.connection.send(flow_mod)
+                    log.info(f"Installed ICMP flow: {packet.payload.srcip} -> {packet.payload.dstip}")
 
             else:
                 log.warning("Dropping unmatched non-ICMP IP packet")
@@ -171,10 +190,11 @@ class LoadBalancer(object):
         match.nw_dst = client_ip  # Ensure it's the client's IP!
 
         actions = [
-            of.ofp_action_dl_addr.set_src(server_mac),
-            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),  # Rewrite the source IP
-            of.ofp_action_dl_addr.set_dst(client_mac),
-            of.ofp_action_output(port=client_port)
+            of.ofp_action_dl_addr.set_src(server_mac),         # Server's MAC
+            of.ofp_action_nw_addr.set_src(VIRTUAL_IP),         # Pretend response comes from VIP
+            of.ofp_action_dl_addr.set_dst(client_mac),         # Client's MAC
+            of.ofp_action_nw_addr.set_dst(client_ip),          # Ensure packets go back through LB
+            of.ofp_action_output(port=client_port)             # Send to client
         ]
 
         msg = of.ofp_flow_mod()
