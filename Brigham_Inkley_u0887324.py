@@ -28,6 +28,8 @@ def launch():
 
     def _handle_PacketIn(event):
         packet = event.parsed
+        core.getLogger().info(f"PacketIn event: type={packet.type}, src={packet.src}, dst={packet.dst}, port={event.port}")
+
         if packet.type == ethernet.ARP_TYPE:
             handle_arp(packet, event.port, event.connection)
         elif packet.type == 0x0800: # Only handle IPv4 packets
