@@ -3,14 +3,15 @@
 
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
+from pox.lib.addresses import EthAddr  # Import EthAddr
 
 def launch():
     def _handle_ConnectionUp(event):
         # Flow for h1 to h5 (ICMP)
         match_h1_to_h5 = of.ofp_match()
         match_h1_to_h5.in_port = 1
-        match_h1_to_h5.dl_src = 0x000000000001  # h1's MAC
-        match_h1_to_h5.dl_dst = 0x000000000005  # h5's MAC
+        match_h1_to_h5.dl_src = EthAddr("00:00:00:00:00:01")  # h1's MAC
+        match_h1_to_h5.dl_dst = EthAddr("00:00:00:00:00:05")  # h5's MAC
         action_h1_to_h5 = of.ofp_action_output(port=5)  # Output to h5's port
         flow_mod_h1_to_h5 = of.ofp_flow_mod()
         flow_mod_h1_to_h5.match = match_h1_to_h5
@@ -20,8 +21,8 @@ def launch():
         # Flow for h5 to h1 (ICMP)
         match_h5_to_h1 = of.ofp_match()
         match_h5_to_h1.in_port = 5
-        match_h5_to_h1.dl_src = 0x000000000005  # h5's MAC
-        match_h5_to_h1.dl_dst = 0x000000000001  # h1's MAC
+        match_h5_to_h1.dl_src = EthAddr("00:00:00:00:00:05")  # h5's MAC
+        match_h5_to_h1.dl_dst = EthAddr("00:00:00:00:00:01")  # h1's MAC
         action_h5_to_h1 = of.ofp_action_output(port=1)  # Output to h1's port
         flow_mod_h5_to_h1 = of.ofp_flow_mod()
         flow_mod_h5_to_h1.match = match_h5_to_h1
@@ -31,9 +32,9 @@ def launch():
         # Flow for h1 ARP Request to h5
         match_h1_arp = of.ofp_match()
         match_h1_arp.in_port = 1
-        match_h1_arp.dl_src = 0x000000000001  # h1's MAC
+        match_h1_arp.dl_src = EthAddr("00:00:00:00:00:01")  # h1's MAC
         match_h1_arp.dl_type = 0x0806  # ARP EtherType
-        match_h1_arp.dl_dst = 0xffffffffffff  # Broadcast MAC
+        match_h1_arp.dl_dst = EthAddr("ff:ff:ff:ff:ff:ff")  # Broadcast MAC
         action_h1_arp = of.ofp_action_output(port=5)
         flow_mod_h1_arp = of.ofp_flow_mod()
         flow_mod_h1_arp.match = match_h1_arp
@@ -43,9 +44,9 @@ def launch():
         # Flow for h5 ARP Reply to h1
         match_h5_arp = of.ofp_match()
         match_h5_arp.in_port = 5
-        match_h5_arp.dl_src = 0x000000000005  # h5's MAC
+        match_h5_arp.dl_src = EthAddr("00:00:00:00:00:05")  # h5's MAC
         match_h5_arp.dl_type = 0x0806  # ARP EtherType
-        match_h5_arp.dl_dst = 0x000000000001  # h1's MAC
+        match_h5_arp.dl_dst = EthAddr("00:00:00:00:00:01")  # h1's MAC
         action_h5_arp = of.ofp_action_output(port=1)
         flow_mod_h5_arp = of.ofp_flow_mod()
         flow_mod_h5_arp.match = match_h5_arp
