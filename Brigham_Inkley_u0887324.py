@@ -51,7 +51,6 @@ class LoadBalancer(object):
             client_port = event.port
 
             if packet.payload.protodst == VIRTUAL_IP:
-                global server_index
                 server_ip = SERVERS[server_index]
                 server_mac = MACS[server_ip]
                 server_port = SERVER_PORTS[server_ip]
