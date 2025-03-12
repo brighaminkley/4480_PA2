@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("6:09 Load balancer initialized.")
+        log.info("6:13 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
@@ -185,7 +185,7 @@ class LoadBalancer(object):
         match.nw_dst = client_ip
 
         actions = [
-            of.ofp_action_dl_addr.set_src(VIRTUAL_IP),  
+            of.ofp_action_dl_addr.set_src(server_mac),
             of.ofp_action_nw_addr.set_src(VIRTUAL_IP),  
             of.ofp_action_dl_addr.set_dst(client_mac), 
             of.ofp_action_output(port=client_port)
