@@ -26,9 +26,11 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("9:42 Load balancer initialized.")
+        log.info("9:47 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
+        global server_index  # Ensure this is at the top of the function
+
         packet = event.parsed
         ETH_TYPE_IPV6 = 0x86DD
 
@@ -51,7 +53,6 @@ class LoadBalancer(object):
             client_port = event.port
 
             if packet.payload.protodst == VIRTUAL_IP:
-                global server_index
                 server_ip = SERVERS[server_index]
                 server_mac = MACS[server_ip]
                 server_port = SERVER_PORTS[server_ip]
@@ -89,7 +90,6 @@ class LoadBalancer(object):
             client_ip = packet.payload.srcip
             client_port = event.port
 
-            global server_index
             server_ip = SERVERS[server_index]
             server_mac = MACS[server_ip]
             server_port = SERVER_PORTS[server_ip]
