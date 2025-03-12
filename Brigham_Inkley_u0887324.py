@@ -26,7 +26,14 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("11:06 Load balancer initialized.")
+        log.info("10:57 Load balancer initialized.")
+
+        msg = of.ofp_flow_mod()
+        msg.match = of.ofp_match(dl_type=0x0806)  # ARP
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))  # Flood ARP packets
+        self.connection.send(msg)
+
+        log.info("Installed ARP flow rule: Flood ARP requests.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -66,9 +73,11 @@ class LoadBalancer(object):
 
                 log.info(f"Assigning server {server_ip} to client {client_ip} on port {client_port}")
 
+                VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")
+
                 # Send ARP reply
                 arp_reply = arp()
-                arp_reply.hwsrc = server_mac
+                arp_reply.hwsrc = VIRTUAL_MAC
                 arp_reply.hwdst = client_mac
                 arp_reply.opcode = arp.REPLY
                 arp_reply.protosrc = VIRTUAL_IP
@@ -77,7 +86,7 @@ class LoadBalancer(object):
                 ethernet_reply = ethernet()
                 ethernet_reply.type = ethernet.ARP_TYPE
                 ethernet_reply.dst = client_mac
-                ethernet_reply.src = server_mac
+                ethernet_reply.src = VIRTUAL_MAC
                 ethernet_reply.payload = arp_reply
 
                 msg = of.ofp_packet_out()
