@@ -51,14 +51,15 @@ class LoadBalancer(object):
             client_port = event.port
 
             if packet.payload.protodst == VIRTUAL_IP:
+                global server_index
                 server_ip = SERVERS[server_index]
                 server_mac = MACS[server_ip]
                 server_port = SERVER_PORTS[server_ip]
-                server_index = (server_index + 1) % len(SERVERS)  # Rotate to next server
+                server_index = (server_index + 1) % len(SERVERS)  # Rotate servers
 
                 log.info(f"Assigning server {server_ip} to client {client_ip} on port {client_port}")
 
-                # Send ARP reply
+                # Send ARP reply (server MAC -> client MAC)
                 arp_reply = arp()
                 arp_reply.hwsrc = server_mac
                 arp_reply.hwdst = client_mac
@@ -85,13 +86,16 @@ class LoadBalancer(object):
         elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == packet.payload.ICMP_PROTOCOL:
             log.info("Processing ICMP ping request")
 
+            client_ip = packet.payload.srcip
+            client_port = event.port
+
             global server_index
             server_ip = SERVERS[server_index]
             server_mac = MACS[server_ip]
             server_port = SERVER_PORTS[server_ip]
-            server_index = (server_index + 1) % len(SERVERS)  # Rotate to next server
+            server_index = (server_index + 1) % len(SERVERS)
 
-            log.info(f"Forwarding ICMP request to {server_ip} ({server_mac}) on port {server_port}")
+            log.info(f"Forwarding ICMP request to {server_ip} on port {server_port}")
 
             # Forward ICMP request to the selected server
             actions = [
@@ -100,20 +104,43 @@ class LoadBalancer(object):
                 of.ofp_action_output(port=server_port)
             ]
 
-            msg = of.ofp_flow_mod()
             match = of.ofp_match()
             match.dl_type = 0x0800  # IP
-            match.nw_proto = 1      # ICMP protocol
-            match.nw_src = packet.payload.srcip
+            match.nw_proto = 1      # ICMP
+            match.nw_src = client_ip
             match.nw_dst = VIRTUAL_IP
+
+            msg = of.ofp_flow_mod()
             msg.match = match
             msg.actions = actions
             self.connection.send(msg)
 
-            log.info(f"✅ Installed ICMP forwarding rule: {packet.payload.srcip} -> {server_ip}")
+            log.info(f"✅ Installed ICMP flow: client {client_ip} -> server {server_ip}")
+
+            # Install reverse flow for server responses
+            actions = [
+                of.ofp_action_dl_addr.set_src(server_mac),
+                of.ofp_action_nw_addr.set_src(VIRTUAL_IP),
+                of.ofp_action_dl_addr.set_dst(packet.src),
+                of.ofp_action_output(port=client_port)
+            ]
+
+            match = of.ofp_match()
+            match.dl_type = 0x0800
+            match.nw_proto = 1
+            match.nw_src = server_ip
+            match.nw_dst = client_ip
+
+            msg = of.ofp_flow_mod()
+            msg.match = match
+            msg.actions = actions
+            self.connection.send(msg)
+
+            log.info(f"✅ Installed reverse ICMP flow: server {server_ip} -> client {client_ip}")
 
         else:
             log.warning(f"Unhandled packet type: {packet.type}")
+
 
     def install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac, server_port):
         """
