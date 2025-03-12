@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("9:47 Load balancer initialized.")
+        log.info("9:58 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index  # Ensure this is at the top of the function
@@ -137,6 +137,36 @@ class LoadBalancer(object):
             self.connection.send(msg)
 
             log.info(f"✅ Installed reverse ICMP flow: server {server_ip} -> client {client_ip}")
+
+        # If the server is requesting a client's MAC (reverse ARP)
+        elif packet.payload.protosrc in SERVERS:
+            server_ip = packet.payload.protosrc
+            client_ip = packet.payload.protodst
+            client_port = event.port
+
+            log.info(f"Server {server_ip} is requesting MAC for client {client_ip}")
+
+            # Simulate ARP reply for client IP
+            arp_reply = arp()
+            arp_reply.hwsrc = EthAddr("00:00:00:00:00:01")  # Placeholder client MAC
+            arp_reply.hwdst = packet.src
+            arp_reply.opcode = arp.REPLY
+            arp_reply.protosrc = client_ip
+            arp_reply.protodst = server_ip
+
+            ethernet_reply = ethernet()
+            ethernet_reply.type = ethernet.ARP_TYPE
+            ethernet_reply.dst = packet.src
+            ethernet_reply.src = EthAddr("00:00:00:00:00:01")  # Placeholder client MAC
+            ethernet_reply.payload = arp_reply
+
+            msg = of.ofp_packet_out()
+            msg.data = ethernet_reply.pack()
+            msg.actions.append(of.ofp_action_output(port=event.port))
+            self.connection.send(msg)
+
+            log.info(f"Replied to {server_ip}'s ARP request with fake client MAC.")
+
 
         else:
             log.warning(f"Unhandled packet type: {packet.type}")
