@@ -29,6 +29,7 @@ class LoadBalancer(object):
         log.info("10:47 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
+        global server_index
         packet = event.parsed
         ETH_TYPE_IPV6 = 0x86DD
 
