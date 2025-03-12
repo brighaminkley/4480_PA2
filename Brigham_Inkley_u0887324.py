@@ -31,7 +31,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:33 Load balancer initialized")
+        log.info("10:38 Load balancer initialized")
         self.install_default_flow()
 
     def install_default_flow(self):
@@ -58,19 +58,29 @@ class LoadBalancer(object):
     def _handle_arp(self, event, packet):
         log.info("In handle_arp method")
         arp_pkt = packet.payload
+        log.info(f"Received ARP packet: {arp_pkt}")
+        
         if arp_pkt.opcode == arp.REQUEST:
+            log.info(f"ARP request from {arp_pkt.protosrc} for {arp_pkt.protodst}")
+            
             # Handle requests for virtual IP
             if arp_pkt.protodst == VIRTUAL_IP:
+                log.info("Handling ARP request for virtual IP")
                 self._handle_virtual_ip_arp(event, arp_pkt)
             # Handle server requests for client IPs
             elif arp_pkt.protodst in CLIENTS and arp_pkt.protosrc in SERVERS:
+                log.info("Handling ARP request from server")
                 self._handle_server_arp(event, arp_pkt)
+            else:
+                log.warning(f"Unhandled ARP request: {arp_pkt}")
+        else:
+            log.warning(f"Unhandled ARP packet: {arp_pkt}")
 
     def _handle_virtual_ip_arp(self, event, arp_pkt):
-        """Handle ARP requests for virtual IP from clients"""
         global server_index
         
         client_ip = arp_pkt.protosrc
+        client_mac = arp_pkt.hwsrc
         client_port = event.port
         
         # Select server using round-robin
@@ -85,7 +95,7 @@ class LoadBalancer(object):
         self._send_arp_reply(
             src_mac=VIRTUAL_MAC,
             src_ip=VIRTUAL_IP,
-            dst_mac=arp_pkt.hwsrc,
+            dst_mac=client_mac,
             dst_ip=client_ip,
             out_port=client_port
         )
