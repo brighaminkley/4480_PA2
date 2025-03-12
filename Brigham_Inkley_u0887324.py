@@ -26,6 +26,9 @@ def launch():
 
     def _handle_PacketIn(event):
         packet = event.parsed
+        # Log incoming packet details
+        core.getLogger().info(f"Received packet: type={packet.type}, src={packet.src}, dst={packet.dst}, in_port={event.port}")
+
         if packet.type == ethernet.ARP_TYPE:
             handle_arp(packet, event.port, event.connection)
 
@@ -41,13 +44,16 @@ def launch():
             r.hwlen = a.hwlen
             r.protolen = a.protolen
             r.opcode = arp.REPLY
-            r.hwdst = packet.src # a.hwsrc
-            r.hwsrc = EthAddr(target_mac)  # Use server's MAC
+            r.hwdst = packet.src  # Use packet.src
+            r.hwsrc = EthAddr(target_mac)
             r.protodst = a.protodst
-            r.protosrc = IPAddr(VIRTUAL_IP)  # Use virtual IP
+            r.protosrc = IPAddr(VIRTUAL_IP)
+
+            # Log ARP reply details
+            core.getLogger().info(f"Sending ARP reply: hwdst={packet.src}, hwsrc={target_mac}, protodst={a.protodst}, protosrc={VIRTUAL_IP}")
 
             # Send ARP reply
-            e = ethernet(type=ethernet.ARP_TYPE, src=EthAddr(target_mac), dst=packet.src, payload=r)
+            e = ethernet(type=ethernet.ARP_TYPE, src=EthAddr(target_mac), dst=packet.src, payload=r)  # Use packet.src
             event_connection.send(e.pack())
 
             # Install flow rules
@@ -56,39 +62,42 @@ def launch():
             # Toggle server selection
             use_server1 = not use_server1
 
-    def install_flow_rules(event_connection, port, target_ip):
-        target_mac = SERVER1_MAC if target_ip == SERVER1_IP else SERVER2_MAC
-        # Flow for client to server
-        match_client_to_server = of.ofp_match()
-        match_client_to_server.in_port = port
-        match_client_to_server.dl_dst = EthAddr(target_mac)
-        match_client_to_server.nw_dst = IPAddr(VIRTUAL_IP)
-        action_set_dst_ip = of.ofp_action_nw_addr.set_dst(IPAddr(target_ip))
-        action_output_to_server = of.ofp_action_output(
-            port=5 if target_ip == SERVER1_IP else 6
-        )  # Output to server's port
-        flow_mod_client_to_server = of.ofp_flow_mod()
-        flow_mod_client_to_server.match = match_client_to_server
-        flow_mod_client_to_server.actions.append(action_set_dst_ip)
-        flow_mod_client_to_server.actions.append(action_output_to_server)
-        event_connection.send(flow_mod_client_to_server)
+        def install_flow_rules(event_connection, port, target_ip):
+            target_mac = SERVER1_MAC if target_ip == SERVER1_IP else SERVER2_MAC
+            # Log flow rule installation
+            core.getLogger().info(f"Installing flow rules for target_ip={target_ip}, target_mac={target_mac}, port={port}")
 
-        # Flow for server to client
-        match_server_to_client = of.ofp_match()
-        match_server_to_client.in_port = 5 if target_ip == SERVER1_IP else 6
-        match_server_to_client.dl_src = EthAddr(target_mac)
-        match_server_to_client.nw_src = IPAddr(target_ip)
-        match_server_to_client.nw_dst = IPAddr(VIRTUAL_IP)
-        action_set_src_ip = of.ofp_action_nw_addr.set_src(IPAddr(VIRTUAL_IP))
-        action_output_to_client = of.ofp_action_output(port=port)  # Output to client's port
-        flow_mod_server_to_client = of.ofp_flow_mod()
-        flow_mod_server_to_client.match = match_server_to_client
-        flow_mod_server_to_client.actions.append(action_set_src_ip)
-        flow_mod_server_to_client.actions.append(action_output_to_client)
-        event_connection.send(flow_mod_server_to_client)
+            # Flow for client to server
+            match_client_to_server = of.ofp_match()
+            match_client_to_server.in_port = port
+            match_client_to_server.dl_dst = EthAddr(target_mac)
+            match_client_to_server.nw_dst = IPAddr(VIRTUAL_IP)
+            action_set_dst_ip = of.ofp_action_nw_addr.set_dst(IPAddr(target_ip))
+            action_output_to_server = of.ofp_action_output(
+                port=5 if target_ip == SERVER1_IP else 6
+            )  # Output to server's port
+            flow_mod_client_to_server = of.ofp_flow_mod()
+            flow_mod_client_to_server.match = match_client_to_server
+            flow_mod_client_to_server.actions.append(action_set_dst_ip)
+            flow_mod_client_to_server.actions.append(action_output_to_server)
+            event_connection.send(flow_mod_client_to_server)
 
-    core.openflow.addListenerByName("ConnectionUp", _handle_ConnectionUp)
-    core.openflow.addListenerByName("PacketIn", _handle_PacketIn)
+            # Flow for server to client
+            match_server_to_client = of.ofp_match()
+            match_server_to_client.in_port = 5 if target_ip == SERVER1_IP else 6
+            match_server_to_client.dl_src = EthAddr(target_mac)
+            match_server_to_client.nw_src = IPAddr(target_ip)
+            match_server_to_client.nw_dst = IPAddr(VIRTUAL_IP)
+            action_set_src_ip = of.ofp_action_nw_addr.set_src(IPAddr(VIRTUAL_IP))
+            action_output_to_client = of.ofp_action_output(port=port)  # Output to client's port
+            flow_mod_server_to_client = of.ofp_flow_mod()
+            flow_mod_server_to_client.match = match_server_to_client
+            flow_mod_server_to_client.actions.append(action_set_src_ip)
+            flow_mod_server_to_client.actions.append(action_output_to_client)
+            event_connection.send(flow_mod_server_to_client)
+
+            core.openflow.addListenerByName("ConnectionUp", _handle_ConnectionUp)
+            core.openflow.addListenerByName("PacketIn", _handle_PacketIn)
 
 launch()
 
