@@ -3,55 +3,85 @@
 
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
-from pox.lib.addresses import EthAddr  # Import EthAddr
+from pox.lib.addresses import EthAddr, IPAddr
+from pox.lib.packet.arp import arp, ethernet
+
+VIRTUAL_IP = "10.0.0.10"
+SERVER1_IP = "10.0.0.5"
+SERVER2_IP = "10.0.0.6"
+SERVER1_MAC = "00:00:00:00:00:05"
+SERVER2_MAC = "00:00:00:00:00:06"
+
+use_server1 = True  # Start with server 1
 
 def launch():
     def _handle_ConnectionUp(event):
-        # Flow for h1 to h5 (ICMP)
-        match_h1_to_h5 = of.ofp_match()
-        match_h1_to_h5.in_port = 1
-        match_h1_to_h5.dl_src = EthAddr("00:00:00:00:00:01")  # h1's MAC
-        match_h1_to_h5.dl_dst = EthAddr("00:00:00:00:00:05")  # h5's MAC
-        action_h1_to_h5 = of.ofp_action_output(port=5)  # Output to h5's port
-        flow_mod_h1_to_h5 = of.ofp_flow_mod()
-        flow_mod_h1_to_h5.match = match_h1_to_h5
-        flow_mod_h1_to_h5.actions.append(action_h1_to_h5)
-        event.connection.send(flow_mod_h1_to_h5)
+        global use_server1
 
-        # Flow for h5 to h1 (ICMP)
-        match_h5_to_h1 = of.ofp_match()
-        match_h5_to_h1.in_port = 5
-        match_h5_to_h1.dl_src = EthAddr("00:00:00:00:00:05")  # h5's MAC
-        match_h5_to_h1.dl_dst = EthAddr("00:00:00:00:00:01")  # h1's MAC
-        action_h5_to_h1 = of.ofp_action_output(port=1)  # Output to h1's port
-        flow_mod_h5_to_h1 = of.ofp_flow_mod()
-        flow_mod_h5_to_h1.match = match_h5_to_h1
-        flow_mod_h5_to_h1.actions.append(action_h5_to_h1)
-        event.connection.send(flow_mod_h5_to_h1)
+        for m in event.connection.features.ports:
+            if m.port_no < of.OFPP_MAX:
+                print(m.port_no, m.name)
 
-        # Flow for h1 ARP Request to h5
-        match_h1_arp = of.ofp_match()
-        match_h1_arp.in_port = 1
-        match_h1_arp.dl_src = EthAddr("00:00:00:00:00:01")  # h1's MAC
-        match_h1_arp.dl_type = 0x0806  # ARP EtherType
-        match_h1_arp.dl_dst = EthAddr("ff:ff:ff:ff:ff:ff")  # Broadcast MAC
-        action_h1_arp = of.ofp_action_output(port=5)
-        flow_mod_h1_arp = of.ofp_flow_mod()
-        flow_mod_h1_arp.match = match_h1_arp
-        flow_mod_h1_arp.actions.append(action_h1_arp)
-        event.connection.send(flow_mod_h1_arp)
+        def handle_arp(packet, port, event_connection):
+            a = packet.payload
+            if a.protodst == IPAddr(VIRTUAL_IP):  # ARP request for virtual IP
+                target_mac = SERVER1_MAC if use_server1 else SERVER2_MAC
+                target_ip = SERVER1_IP if use_server1 else SERVER2_IP
 
-        # Flow for h5 ARP Reply to h1
-        match_h5_arp = of.ofp_match()
-        match_h5_arp.in_port = 5
-        match_h5_arp.dl_src = EthAddr("00:00:00:00:00:05")  # h5's MAC
-        match_h5_arp.dl_type = 0x0806  # ARP EtherType
-        match_h5_arp.dl_dst = EthAddr("00:00:00:00:00:01")  # h1's MAC
-        action_h5_arp = of.ofp_action_output(port=1)
-        flow_mod_h5_arp = of.ofp_flow_mod()
-        flow_mod_h5_arp.match = match_h5_arp
-        flow_mod_h5_arp.actions.append(action_h5_arp)
-        event.connection.send(flow_mod_h5_arp)
+                r = arp()
+                r.hwtype = a.hwtype
+                r.prototype = a.prototype
+                r.hwlen = a.hwlen
+                r.protolen = a.protolen
+                r.opcode = arp.REPLY
+                r.hwdst = a.hwsrc
+                r.hwsrc = EthAddr(target_mac)  # Use server's MAC
+                r.protodst = a.protodst
+                r.protosrc = IPAddr(VIRTUAL_IP)  # Use virtual IP
+
+                # Send ARP reply
+                e = ethernet(type=packet.type, src=EthAddr(target_mac), dst=packet.src, payload=r)
+                event_connection.send(e.pack())
+
+                # Install flow rules
+                install_flow_rules(event_connection, port, target_ip)
+
+                # Toggle server selection
+                use_server1 = not use_server1
+
+        def install_flow_rules(event_connection, port, target_ip):
+            target_mac = SERVER1_MAC if target_ip == SERVER1_IP else SERVER2_MAC
+            # Flow for client to server
+            match_client_to_server = of.ofp_match()
+            match_client_to_server.in_port = port
+            match_client_to_server.dl_dst = EthAddr(target_mac)
+            match_client_to_server.nw_dst = IPAddr(VIRTUAL_IP)
+            action_set_dst_ip = of.ofp_action_nw_addr.set_dst(IPAddr(target_ip))
+            action_output_to_server = of.ofp_action_output(
+                port=5 if target_ip == SERVER1_IP else 6
+            )  # Output to server's port
+            flow_mod_client_to_server = of.ofp_flow_mod()
+            flow_mod_client_to_server.match = match_client_to_server
+            flow_mod_client_to_server.actions.append(action_set_dst_ip)
+            flow_mod_client_to_server.actions.append(action_output_to_server)
+            event_connection.send(flow_mod_client_to_server)
+
+            # Flow for server to client
+            match_server_to_client = of.ofp_match()
+            match_server_to_client.in_port = 5 if target_ip == SERVER1_IP else 6
+            match_server_to_client.dl_src = EthAddr(target_mac)
+            match_server_to_client.nw_src = IPAddr(target_ip)
+            match_server_to_client.nw_dst = IPAddr(VIRTUAL_IP)
+            action_set_src_ip = of.ofp_action_nw_addr.set_src(IPAddr(VIRTUAL_IP))
+            action_output_to_client = of.ofp_action_output(port=port)  # Output to client's port
+            flow_mod_server_to_client = of.ofp_flow_mod()
+            flow_mod_server_to_client.match = match_server_to_client
+            flow_mod_server_to_client.actions.append(action_set_src_ip)
+            flow_mod_server_to_client.actions.append(action_output_to_client)
+            event_connection.send(flow_mod_server_to_client)
+
+        for packet in event.parsed.find("arp"):
+            handle_arp(packet, packet.in_port, event.connection)
 
     core.openflow.addListenerByName("ConnectionUp", _handle_ConnectionUp)
 
