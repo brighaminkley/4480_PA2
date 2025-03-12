@@ -28,13 +28,15 @@ def launch():
 
     def _handle_PacketIn(event):
         packet = event.parsed
-
-        # Log incoming packet details
-        core.getLogger().info(
-            f"Received packet: type={packet.type}, src={packet.src}, dst={packet.dst}, in_port={event.port}")
-
         if packet.type == ethernet.ARP_TYPE:
             handle_arp(packet, event.port, event.connection)
+        elif packet.type == 0x0800: # Only handle IPv4 packets
+            core.getLogger().info(
+                f"Received IPv4 packet: type={packet.type}, src={packet.src}, dst={packet.dst}, in_port={event.port}")
+            # Handle IPv4 traffic here if needed in the future
+        else:
+            core.getLogger().info(f"Ignoring packet type: {packet.type}")
+            return
 
 
     def handle_arp(packet, port, event_connection):
@@ -73,6 +75,8 @@ def launch():
 
 
     def install_flow_rules(event_connection, port, target_ip):
+        match_client_to_server.dl_type = 0x0800 
+        match_server_to_client.dl_type = 0x0800
         target_mac = SERVER1_MAC if target_ip == SERVER1_IP else SERVER2_MAC
         # Log flow rule installation
         core.getLogger().info(
