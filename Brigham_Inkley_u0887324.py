@@ -2,58 +2,73 @@
 # By Brigham Inkley
 
 from pox.core import core
-import pox.openflow.libopenflow_01 as of
-from pox.lib.addresses import EthAddr
-from pox.lib.packet import ethernet
+from pox.lib.addresses import IPAddr, EthAddr
+from pox.lib.packet import arp, ethernet
+from pox.openflow import ofp
+import time
 
-VIRTUAL_IP = "10.0.0.10"
-SERVER1_IP = "10.0.0.5"
-SERVER2_IP = "10.0.0.6"
-SERVER1_MAC = "00:00:00:00:00:05"
-SERVER2_MAC = "00:00:00:00:00:06"
+log = core.getLogger()
+
+# Variables for server IPs and MACs
+server_ips = [IPAddr("10.0.0.5"), IPAddr("10.0.0.6")]
+server_macs = [EthAddr("00:00:00:00:00:05"), EthAddr("00:00:00:00:00:06")]
+round_robin_counter = 0
+
+class VirtualIPLoadBalancer (object):
+    def __init__(self, connection):
+        self.connection = connection
+        self.connection.addListeners(self)
+    
+    def _handle_arp(self, event):
+        packet = event.parsed
+        if isinstance(packet, arp.arp):
+            if packet.opcode == arp.REQUEST and packet.dstip == IPAddr("10.0.0.10"):
+                # Respond to ARP request
+                self.handle_arp_request(event, packet)
+
+    def handle_arp_request(self, event, packet):
+        global round_robin_counter
+        # Select next server based on round robin
+        server_ip = server_ips[round_robin_counter % len(server_ips)]
+        server_mac = server_macs[round_robin_counter % len(server_macs)]
+        
+        # Send ARP reply
+        arp_reply = arp.arp()
+        arp_reply.hwsrc = server_mac
+        arp_reply.hwdst = packet.hwsrc
+        arp_reply.opcode = arp.REPLY
+        arp_reply.protosrc = packet.dstip
+        arp_reply.protodst = packet.srcip
+        
+        ethernet_frame = ethernet.ethernet()
+        ethernet_frame.src = server_mac
+        ethernet_frame.dst = packet.hwsrc
+        ethernet_frame.type = ethernet.ARP_TYPE
+        ethernet_frame.payload = arp_reply
+
+        self.connection.send(ethernet_frame)
+
+        # Set up flow rule to map the virtual IP to the server
+        self.set_flow_rule(event, packet.src, server_ip, server_mac)
+
+        round_robin_counter += 1
+
+    def set_flow_rule(self, event, src_ip, server_ip, server_mac):
+        msg = ofp.ofp_flow_mod()
+        msg.match = ofp.ofp_match()
+        msg.match.nw_dst = server_ip
+        msg.match.in_port = event.port
+        msg.actions.append(ofp.ofp_action_dl_addr(type=ofp.OFPAT_SET_DL_DST, dl_addr=server_mac))
+        msg.actions.append(ofp.ofp_action_nw_addr(type=ofp.OFPAT_SET_NW_DST, nw_addr=server_ip))
+        self.connection.send(msg)
 
 def launch():
-    def _handle_ConnectionUp(event):
-        for m in event.connection.features.ports:
-            if m.port_no < of.OFPP_MAX:
-                print(m.port_no, m.name)
-
-    def _handle_PacketIn(event):
-        packet = event.parsed
-        # Log incoming packet details
-        core.getLogger().info(
-            f"Received packet: type={packet.type}, src={packet.src}, dst={packet.dst}, in_port={event.port}")
-        # Handle Ethernet packets
-        if packet.type == ethernet.ARP_TYPE:  # Corrected line for ARP
-            # Handle ARP packets here (if needed later)
-            pass
-        elif packet.type == 0x0800:  # Corrected line for IPv4
-            dst_mac = packet.dst
-            in_port = event.port
-            event_connection = event.connection
-            if dst_mac == EthAddr(SERVER1_MAC):
-                install_flow_rules(event_connection, in_port, SERVER1_MAC, 5)  # 5 is the port for h5
-            elif dst_mac == EthAddr(SERVER2_MAC):
-                install_flow_rules(event_connection, in_port, SERVER2_MAC, 6)  # 6 is the port for h6
-            elif dst_mac == packet.src:
-                if packet.src == EthAddr(SERVER1_MAC):
-                    install_flow_rules(event_connection, in_port, packet.src, 1)
-                elif packet.src == EthAddr(SERVER2_MAC):
-                    install_flow_rules(event_connection, in_port, packet.src, 1)
-    def install_flow_rules(event_connection, in_port, dst_mac, out_port):
-        core.getLogger().info(f"Installing flow rule: in_port={in_port}, dst_mac={dst_mac}, out_port={out_port}")
-        match = of.ofp_match()
-        match.in_port = in_port
-        match.dl_dst = EthAddr(dst_mac)
-        flow_mod = of.ofp_flow_mod()
-        flow_mod.match = match
-        action = of.ofp_action_output(port=out_port)
-        flow_mod.actions.append(action)
-        event_connection.send(flow_mod)
-        core.getLogger().info(f"flow mod sent: {flow_mod}")
     core.openflow.addListenerByName("ConnectionUp", _handle_ConnectionUp)
-    core.openflow.addListenerByName("PacketIn", _handle_PacketIn)
-launch()
+
+def _handle_ConnectionUp(event):
+    log.info("Switch connected: %s", event.connection)
+    VirtualIPLoadBalancer(event.connection)
+
 
 # from pox.core import core
 # import pox.openflow.libopenflow_01 as of
