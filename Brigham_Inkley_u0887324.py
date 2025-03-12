@@ -26,7 +26,7 @@ class LoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:47 Load balancer initialized.")
+        log.info("10:56 Load balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -56,7 +56,10 @@ class LoadBalancer(object):
                 server_ip = SERVERS[server_index]
                 server_mac = MACS[server_ip]
                 server_port = SERVER_PORTS[server_ip]
-                server_index = (server_index + 1) % len(SERVERS)  # Rotate to next server
+                server_index = (server_index + 1) % len(SERVERS)
+
+                selected_server_ip = server_ip
+                selected_server_port = server_port
 
                 log.info(f"Assigning server {server_ip} to client {client_ip} on port {client_port}")
 
@@ -81,7 +84,8 @@ class LoadBalancer(object):
                 log.info(f"Sent ARP reply with MAC {server_mac} for virtual IP {VIRTUAL_IP}")
 
                 # Install client-to-server and server-to-client flows
-                self.install_flow_rules(client_port, client_mac, client_ip, server_ip, server_mac, server_port)
+                self.install_flow_rules(client_port, client_mac, client_ip, selected_server_ip, server_mac, selected_server_port)
+
 
         # Handle ICMP (ping) packets
         elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == packet.payload.ICMP_PROTOCOL:
@@ -97,8 +101,8 @@ class LoadBalancer(object):
             # Forward ICMP request to the selected server
             actions = [
                 of.ofp_action_dl_addr.set_dst(server_mac),
-                of.ofp_action_nw_addr.set_dst(server_ip),
-                of.ofp_action_output(port=server_port)
+                of.ofp_action_nw_addr.set_dst(selected_server_ip),
+                of.ofp_action_output(port=selected_server_port)
             ]
 
             msg = of.ofp_flow_mod()
@@ -111,7 +115,7 @@ class LoadBalancer(object):
             msg.actions = actions
             self.connection.send(msg)
 
-            log.info(f"✅ Installed ICMP forwarding rule: {packet.payload.srcip} -> {server_ip}")
+            log.info(f"Installed ICMP forwarding rule: {packet.payload.srcip} -> {server_ip}")
 
         else:
             log.warning(f"Unhandled packet type: {packet.type}")
