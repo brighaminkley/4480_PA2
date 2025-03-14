@@ -25,7 +25,7 @@ class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("4:00 Load Balancer initialized.")
+        log.info("4:07 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -67,6 +67,36 @@ class VirtualIPLoadBalancer:
 
                 # Install flow rules to forward traffic
                 self._install_flow_rules(event.port, packet.src, packet.payload.protosrc, server["ip"], server["mac"])
+
+        # Handle ARP Requests from Backend Servers (Servers Asking for Client MAC)
+        elif packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
+            if packet.payload.protosrc in [server["ip"] for server in SERVERS]:  # If a backend server sent it
+                server_ip = packet.payload.protosrc
+                client_ip = packet.payload.protodst
+                log.info(f"Backend server {server_ip} is requesting MAC for {client_ip}.")
+
+                # Construct ARP reply
+                arp_reply = arp()
+                arp_reply.hwsrc = EthAddr("00:00:00:00:00:10")  # Virtual MAC for consistency
+                arp_reply.hwdst = packet.src
+                arp_reply.opcode = arp.REPLY
+                arp_reply.protosrc = client_ip
+                arp_reply.protodst = server_ip
+
+                # Create Ethernet frame
+                ethernet_reply = ethernet()
+                ethernet_reply.type = ethernet.ARP_TYPE
+                ethernet_reply.src = EthAddr("00:00:00:00:00:10")  # Virtual MAC
+                ethernet_reply.dst = packet.src
+                ethernet_reply.payload = arp_reply
+
+                # Send ARP response
+                msg = of.ofp_packet_out()
+                msg.data = ethernet_reply.pack()
+                msg.actions.append(of.ofp_action_output(port=event.port))
+                self.connection.send(msg)
+                log.info(f"Sent ARP reply to server {server_ip} with MAC for {client_ip}.")
+
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """
