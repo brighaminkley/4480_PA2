@@ -26,14 +26,14 @@ class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("11:18 Load Balancer initialized.")
+        log.info("11:22 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
         packet = event.parsed
 
         if not packet:
-            log.warning("⚠️  Received empty packet. Ignoring.")
+            log.warning("Received empty packet. Ignoring.")
             return
 
         # Handle ARP Requests
@@ -41,7 +41,7 @@ class VirtualIPLoadBalancer:
             self._handle_arp(event, packet)
 
         # Handle ICMP Requests (Ping)
-        elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == icmp.ICMP_PROTOCOL:
+        elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == 1:
             self._handle_icmp(event, packet)
 
     def _handle_arp(self, event, packet):
