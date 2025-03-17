@@ -22,11 +22,14 @@ SERVER_PORTS = {
     IPAddr("10.0.0.6"): 6   # Port for h6
 }
 
+# Tracks client-server mappings for proper ICMP handling
+CLIENT_TO_SERVER = {}
+
 class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("11:25 Load Balancer initialized.")
+        log.info("4:25 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -41,7 +44,7 @@ class VirtualIPLoadBalancer:
             self._handle_arp(event, packet)
 
         # Handle ICMP Requests (Ping)
-        elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == 1:
+        elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == icmp.ICMP_PROTOCOL:
             self._handle_icmp(event, packet)
 
     def _handle_arp(self, event, packet):
@@ -54,6 +57,8 @@ class VirtualIPLoadBalancer:
             # Select the next server in round-robin order
             server = SERVERS[server_index]
             server_index = (server_index + 1) % len(SERVERS)
+
+            CLIENT_TO_SERVER[packet.payload.protosrc] = server  # Track mapping
 
             # Construct ARP reply
             arp_reply = arp()
@@ -84,23 +89,22 @@ class VirtualIPLoadBalancer:
         """
         Handles ICMP requests (pings) and ensures the correct server receives them.
         """
-        log.info(f"Handling ICMP packet from {packet.payload.srcip} to {packet.payload.dstip}")
-
-        # Look up the correct server based on the MAC assigned in ARP response
-        try:
-            server = next(s for s in SERVERS if s["mac"] == packet.dst)
-        except StopIteration:
-            log.warning("⚠️ No matching server found for ICMP request. Dropping packet.")
+        client_ip = packet.payload.srcip
+        if client_ip not in CLIENT_TO_SERVER:
+            log.warning(f"⚠️ No backend server mapped for {client_ip}. Dropping ICMP packet.")
             return
 
+        server = CLIENT_TO_SERVER[client_ip]
         server_ip = server["ip"]
         server_mac = server["mac"]
-        client_ip = packet.payload.srcip
         client_mac = packet.src
         client_port = event.port
         server_port = SERVER_PORTS[server_ip]
 
-        log.info(f"Forwarding ICMP request {client_ip} -> {packet.payload.dstip} to {server_ip}")
+        log.info(f"Forwarding ICMP {client_ip} -> {VIRTUAL_IP} to {server_ip}")
+
+        # Clear old rules before adding new ones
+        self._delete_existing_flows(client_ip, server_ip)
 
         # Client-to-Server Flow (ICMP Forward)
         msg = of.ofp_flow_mod()
@@ -116,7 +120,7 @@ class VirtualIPLoadBalancer:
         msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
         msg.actions.append(of.ofp_action_output(port=server_port))
         self.connection.send(msg)
-        log.info(f"✅ Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP} on port {server_port}.")
+        log.info(f"Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP} on port {server_port}.")
 
         # Server-to-Client Flow (ICMP Reply)
         msg = of.ofp_flow_mod()
@@ -133,8 +137,7 @@ class VirtualIPLoadBalancer:
         msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
         msg.actions.append(of.ofp_action_output(port=client_port))
         self.connection.send(msg)
-        log.info(f"✅ Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP} on port {client_port}.")
-
+        log.info(f"Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP} on port {client_port}.")
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """
@@ -144,35 +147,44 @@ class VirtualIPLoadBalancer:
         """
         server_port = SERVER_PORTS[server_ip]
 
+        # Clear old rules before adding new ones
+        self._delete_existing_flows(client_ip, server_ip)
+
         # Client-to-Server Flow
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
         match.dl_type = 0x0800  # IPv4
         match.nw_dst = VIRTUAL_IP
         match.in_port = client_port
-
         msg.match = match
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))  # Rewrite MAC
-        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))  # Rewrite IP
-        msg.actions.append(of.ofp_action_output(port=server_port))  # Forward
+
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        msg.actions.append(of.ofp_action_output(port=server_port))
         self.connection.send(msg)
         log.info(f"Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP} on port {server_port}.")
 
         # Server-to-Client Flow
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800  # IPv4
+        match.dl_type = 0x0800
         match.nw_src = server_ip
         match.nw_dst = client_ip
         match.in_port = server_port
-
         msg.match = match
-        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))  # Set source MAC
-        msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))  # Set source IP to Virtual IP
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))  # Set destination MAC
-        msg.actions.append(of.ofp_action_output(port=client_port))  # Send back to client
+
+        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))
+        msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
+        msg.actions.append(of.ofp_action_output(port=client_port))
         self.connection.send(msg)
         log.info(f"Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP} on port {client_port}.")
+
+    def _delete_existing_flows(self, client_ip, server_ip):
+        """Deletes old flows for a given client-server pair to prevent conflicts."""
+        msg = of.ofp_flow_mod(command=of.OFPFC_DELETE)
+        msg.match = of.ofp_match(nw_src=client_ip, nw_dst=server_ip)
+        self.connection.send(msg)
 
 def launch():
     def start_switch(event):
