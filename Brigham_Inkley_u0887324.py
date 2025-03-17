@@ -26,7 +26,7 @@ class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("11:22 Load Balancer initialized.")
+        log.info("11:25 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -81,26 +81,60 @@ class VirtualIPLoadBalancer:
             self._install_flow_rules(event.port, packet.src, packet.payload.protosrc, server["ip"], server["mac"])
 
     def _handle_icmp(self, event, packet):
-        """Handles ICMP echo requests (ping) for the Virtual IP."""
-        global server_index
+        """
+        Handles ICMP requests (pings) and ensures the correct server receives them.
+        """
+        log.info(f"Handling ICMP packet from {packet.payload.srcip} to {packet.payload.dstip}")
 
-        src_ip = packet.payload.srcip
-        dst_ip = packet.payload.dstip
+        # Look up the correct server based on the MAC assigned in ARP response
+        try:
+            server = next(s for s in SERVERS if s["mac"] == packet.dst)
+        except StopIteration:
+            log.warning("⚠️ No matching server found for ICMP request. Dropping packet.")
+            return
 
-        log.info(f"Handling ICMP packet from {src_ip} to {dst_ip}")
+        server_ip = server["ip"]
+        server_mac = server["mac"]
+        client_ip = packet.payload.srcip
+        client_mac = packet.src
+        client_port = event.port
+        server_port = SERVER_PORTS[server_ip]
 
-        # If the destination is the Virtual IP, forward to a backend server
-        if dst_ip == VIRTUAL_IP:
-            server = SERVERS[server_index]
-            server_index = (server_index + 1) % len(SERVERS)  # Round-robin
-            server_ip = server["ip"]
-            server_mac = server["mac"]
-            server_port = SERVER_PORTS[server_ip]
+        log.info(f"Forwarding ICMP request {client_ip} -> {packet.payload.dstip} to {server_ip}")
 
-            log.info(f"Forwarding ICMP request {src_ip} -> {VIRTUAL_IP} to {server_ip}")
+        # Client-to-Server Flow (ICMP Forward)
+        msg = of.ofp_flow_mod()
+        match = of.ofp_match()
+        match.dl_type = 0x0800  # IPv4
+        match.nw_proto = 1  # ICMP
+        match.nw_src = client_ip
+        match.nw_dst = VIRTUAL_IP
+        match.in_port = client_port
+        msg.match = match
 
-            # Install flow rules for proper forwarding
-            self._install_flow_rules(event.port, packet.src, src_ip, server_ip, server_mac)
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        msg.actions.append(of.ofp_action_output(port=server_port))
+        self.connection.send(msg)
+        log.info(f"✅ Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP} on port {server_port}.")
+
+        # Server-to-Client Flow (ICMP Reply)
+        msg = of.ofp_flow_mod()
+        match = of.ofp_match()
+        match.dl_type = 0x0800
+        match.nw_proto = 1
+        match.nw_src = server_ip
+        match.nw_dst = client_ip
+        match.in_port = server_port
+        msg.match = match
+
+        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))
+        msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
+        msg.actions.append(of.ofp_action_output(port=client_port))
+        self.connection.send(msg)
+        log.info(f"✅ Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP} on port {client_port}.")
+
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """
