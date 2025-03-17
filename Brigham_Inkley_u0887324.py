@@ -21,11 +21,14 @@ SERVER_PORTS = {
     IPAddr("10.0.0.6"): 6   # Port for h6
 }
 
+VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")  # Define virtual MAC as a constant
+
+
 class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:30 Load Balancer initialized.")
+        log.info("10:35 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -86,7 +89,7 @@ class VirtualIPLoadBalancer:
                 # Create Ethernet frame
                 ethernet_reply = ethernet()
                 ethernet_reply.type = ethernet.ARP_TYPE
-                ethernet_reply.src = packet.scr
+                ethernet_reply.src = packet.src
                 ethernet_reply.dst = packet.src
                 ethernet_reply.payload = arp_reply
 
@@ -106,7 +109,6 @@ class VirtualIPLoadBalancer:
         """
 
         server_port = SERVER_PORTS[server_ip]
-        VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")  
 
         # Client-to-Server Flow
         msg = of.ofp_flow_mod()
@@ -131,6 +133,7 @@ class VirtualIPLoadBalancer:
         match.nw_dst = client_ip  
         match.in_port = server_port
 
+        msg.match = match
         msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))  
         msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))  
         msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))  
