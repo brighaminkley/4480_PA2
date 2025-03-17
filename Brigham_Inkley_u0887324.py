@@ -28,7 +28,7 @@ class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("4:31 Load Balancer initialized.")
+        log.info("4:40 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -43,7 +43,7 @@ class VirtualIPLoadBalancer:
             self._handle_arp(event, packet)
 
         # Handle ICMP Requests (Ping)
-        elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == 1:  # ✅ FIXED: ICMP_PROTOCOL -> 1
+        elif packet.type == ethernet.IP_TYPE and packet.payload.protocol == 1:
             self._handle_icmp(event, packet)
 
     def _handle_arp(self, event, packet):
@@ -100,14 +100,11 @@ class VirtualIPLoadBalancer:
 
         log.info(f"Forwarding ICMP {client_ip} -> {VIRTUAL_IP} to {server_ip}")
 
-        # Clear old rules before adding new ones
-        self._delete_existing_flows(client_ip, server_ip)
-
         # Client-to-Server Flow (ICMP Forward)
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800  # ✅ FIXED: Set prerequisite (IPv4)
-        match.nw_proto = 1  # ✅ FIXED: ICMP protocol
+        match.dl_type = 0x0800
+        match.nw_proto = 1  # ICMP protocol
         match.nw_src = client_ip
         match.nw_dst = VIRTUAL_IP
         match.in_port = client_port
@@ -122,45 +119,8 @@ class VirtualIPLoadBalancer:
         # Server-to-Client Flow (ICMP Reply)
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800  # ✅ FIXED: Set prerequisite (IPv4)
-        match.nw_proto = 1  # ✅ FIXED: ICMP protocol
-        match.nw_src = server_ip
-        match.nw_dst = client_ip
-        match.in_port = server_port
-        msg.match = match
-
-        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))
-        msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
-        msg.actions.append(of.ofp_action_output(port=client_port))
-        self.connection.send(msg)
-        log.info(f"Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP} on port {client_port}.")
-
-    def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
-        """Installs OpenFlow rules for client-server communication."""
-        server_port = SERVER_PORTS[server_ip]
-
-        # Clear old rules before adding new ones
-        self._delete_existing_flows(client_ip, server_ip)
-
-        # Client-to-Server Flow
-        msg = of.ofp_flow_mod()
-        match = of.ofp_match()
-        match.dl_type = 0x0800  # ✅ FIXED: Set prerequisite (IPv4)
-        match.nw_dst = VIRTUAL_IP
-        match.in_port = client_port
-        msg.match = match
-
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        msg.actions.append(of.ofp_action_output(port=server_port))
-        self.connection.send(msg)
-        log.info(f"Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP} on port {server_port}.")
-
-        # Server-to-Client Flow
-        msg = of.ofp_flow_mod()
-        match = of.ofp_match()
-        match.dl_type = 0x0800  # ✅ FIXED: Set prerequisite (IPv4)
+        match.dl_type = 0x0800
+        match.nw_proto = 1  # ICMP protocol
         match.nw_src = server_ip
         match.nw_dst = client_ip
         match.in_port = server_port
@@ -185,7 +145,6 @@ def launch():
         VirtualIPLoadBalancer(event.connection)
 
     core.openflow.addListenerByName("ConnectionUp", start_switch)
-
 
 # Code below functioning at 66.6%
 # from pox.core import core
