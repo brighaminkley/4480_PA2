@@ -26,7 +26,7 @@ class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("11:01 Load Balancer initialized.")
+        log.info("11:06 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -144,8 +144,7 @@ class VirtualIPLoadBalancer:
         # Client-to-Server Flow
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800  # IPv4
-        match.nw_proto = 1       # ICMP
+        match.dl_type = 0x0800  # IPv4 (match all IPv4 traffic)
         match.nw_dst = VIRTUAL_IP
         match.in_port = client_port
 
@@ -159,8 +158,7 @@ class VirtualIPLoadBalancer:
         # Server-to-Client Flow
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800  # IPv4
-        match.nw_proto = 1       # ICMP
+        match.dl_type = 0x0800  # IPv4 (match all IPv4 traffic)
         match.nw_src = server_ip
         match.nw_dst = client_ip
         match.in_port = server_port
