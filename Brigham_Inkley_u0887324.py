@@ -25,7 +25,7 @@ class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("4:07 Load Balancer initialized.")
+        log.info("10:30 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -77,7 +77,7 @@ class VirtualIPLoadBalancer:
 
                 # Construct ARP reply
                 arp_reply = arp()
-                arp_reply.hwsrc = EthAddr("00:00:00:00:00:10")  # Virtual MAC for consistency
+                arp_reply.hwsrc = packet.src
                 arp_reply.hwdst = packet.src
                 arp_reply.opcode = arp.REPLY
                 arp_reply.protosrc = client_ip
@@ -86,7 +86,7 @@ class VirtualIPLoadBalancer:
                 # Create Ethernet frame
                 ethernet_reply = ethernet()
                 ethernet_reply.type = ethernet.ARP_TYPE
-                ethernet_reply.src = EthAddr("00:00:00:00:00:10")  # Virtual MAC
+                ethernet_reply.src = packet.scr
                 ethernet_reply.dst = packet.src
                 ethernet_reply.payload = arp_reply
 
@@ -105,46 +105,40 @@ class VirtualIPLoadBalancer:
         2. Server-to-Client flow
         """
 
-        server_port = SERVER_PORTS[server_ip]  # Get the correct server port
-        VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")  # Define a static Virtual MAC
+        server_port = SERVER_PORTS[server_ip]
+        VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")  
 
-        # 🔹 Client-to-Server Flow (Rewrite destination MAC/IP, forward to real server)
+        # Client-to-Server Flow
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800  # Match IP packets
-        match.nw_proto = 1  # Match ICMP (ping)
-        match.nw_dst = VIRTUAL_IP  # Client sending to Virtual IP
-        match.in_port = client_port  # Traffic from client
+        match.dl_type = 0x0800
+        match.nw_dst = VIRTUAL_IP  
+        match.in_port = client_port 
 
         msg.match = match
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))  # Rewrite to server MAC
-        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))  # Rewrite to server IP
-        msg.actions.append(of.ofp_action_output(port=server_port))  # Send to correct server port
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        msg.actions.append(of.ofp_action_output(port=server_port))  
         self.connection.send(msg)
 
-        log.info(f"✅ Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP}.")
+        log.info(f"Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP}.")
 
-        # 🔹 Server-to-Client Flow (Rewrite source MAC/IP, forward to client)
+        # Server-to-Client Flow
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800  # Match IP packets
-        match.nw_proto = 1  # ICMP
-        match.nw_src = server_ip  # Match real server response
-        match.nw_dst = client_ip  # Sending back to client
-        match.in_port = server_port  # Match correct server port
+        match.dl_type = 0x0800  
+        match.nw_src = server_ip  
+        match.nw_dst = client_ip  
+        match.in_port = server_port
 
-        msg.match = match
-        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))  # Make it look like Virtual IP
-        msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))  # Set source IP to Virtual IP
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))  # Send to client MAC
-        msg.actions.append(of.ofp_action_output(port=client_port))  # Forward to client
+        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))  
+        msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))  
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))  
+        msg.actions.append(of.ofp_action_output(port=client_port))
         self.connection.send(msg)
 
-        log.info(f"✅ Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP}.")
+        log.info(f"Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP}.")
 
-
-
-# Start the POX Controller
 def launch():
     def start_switch(event):
         log.info(f"Switch connected: {event.connection.dpid}")
