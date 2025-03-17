@@ -10,6 +10,7 @@ log = core.getLogger()
 
 # Virtual IP and backend servers
 VIRTUAL_IP = IPAddr("10.0.0.10")
+VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")  # Define virtual MAC as a constant
 SERVERS = [
     {"ip": IPAddr("10.0.0.5"), "mac": EthAddr("00:00:00:00:00:05")},
     {"ip": IPAddr("10.0.0.6"), "mac": EthAddr("00:00:00:00:00:06")},
@@ -21,24 +22,26 @@ SERVER_PORTS = {
     IPAddr("10.0.0.6"): 6   # Port for h6
 }
 
-VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")  # Define virtual MAC as a constant
-
-
 class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:41 Load Balancer initialized.")
+        log.info("11:01 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
         packet = event.parsed
 
         if not packet:
+            log.warning("Received empty packet. Ignoring.")
+            return
+
+        if packet.type != ethernet.ARP_TYPE:
+            log.warning(f"Received non-ARP packet of type {packet.type}. Ignoring.")
             return
 
         # Handle ARP Requests for Virtual IP
-        if packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
+        if packet.payload.opcode == arp.REQUEST:
             if packet.payload.protodst == VIRTUAL_IP:
                 log.info(f"Received ARP request for {VIRTUAL_IP}. Assigning a backend server.")
 
@@ -71,17 +74,16 @@ class VirtualIPLoadBalancer:
                 # Install flow rules to forward traffic
                 self._install_flow_rules(event.port, packet.src, packet.payload.protosrc, server["ip"], server["mac"])
 
-        # Handle ARP Requests from Backend Servers (Servers Asking for Client MAC)
-        elif packet.type == ethernet.ARP_TYPE and packet.payload.opcode == arp.REQUEST:
-            if packet.payload.protosrc in [server["ip"] for server in SERVERS]:  # If a backend server sent it
+            # Handle ARP Requests from Backend Servers (Servers Asking for Client MAC)
+            elif packet.payload.protosrc in [server["ip"] for server in SERVERS]:  # If a backend server sent it
                 server_ip = packet.payload.protosrc
                 client_ip = packet.payload.protodst
                 log.info(f"Backend server {server_ip} is requesting MAC for {client_ip}.")
 
                 # Construct ARP reply
                 arp_reply = arp()
-                arp_reply.hwsrc = packet.src
-                arp_reply.hwdst = packet.src
+                arp_reply.hwsrc = packet.src  # Use the client's MAC from the ARP request
+                arp_reply.hwdst = packet.src  # Destination MAC is the server's MAC
                 arp_reply.opcode = arp.REPLY
                 arp_reply.protosrc = client_ip
                 arp_reply.protodst = server_ip
@@ -89,8 +91,8 @@ class VirtualIPLoadBalancer:
                 # Create Ethernet frame
                 ethernet_reply = ethernet()
                 ethernet_reply.type = ethernet.ARP_TYPE
-                ethernet_reply.src = packet.src
-                ethernet_reply.dst = packet.src
+                ethernet_reply.src = packet.src  # Use the client's MAC
+                ethernet_reply.dst = packet.src  # Destination MAC is the server's MAC
                 ethernet_reply.payload = arp_reply
 
                 # Send ARP response
@@ -100,6 +102,36 @@ class VirtualIPLoadBalancer:
                 self.connection.send(msg)
                 log.info(f"Sent ARP reply to server {server_ip} with MAC for {client_ip}.")
 
+            # Handle ARP Requests between h1 and h5
+            elif packet.payload.protodst in [server["ip"] for server in SERVERS]:  # If a client is asking for a server's MAC
+                server_ip = packet.payload.protodst
+                client_ip = packet.payload.protosrc
+                log.info(f"Client {client_ip} is requesting MAC for server {server_ip}.")
+
+                # Find the server's MAC address
+                server = next(server for server in SERVERS if server["ip"] == server_ip)
+
+                # Construct ARP reply
+                arp_reply = arp()
+                arp_reply.hwsrc = server["mac"]
+                arp_reply.hwdst = packet.src
+                arp_reply.opcode = arp.REPLY
+                arp_reply.protosrc = server_ip
+                arp_reply.protodst = client_ip
+
+                # Create Ethernet frame
+                ethernet_reply = ethernet()
+                ethernet_reply.type = ethernet.ARP_TYPE
+                ethernet_reply.src = server["mac"]
+                ethernet_reply.dst = packet.src
+                ethernet_reply.payload = arp_reply
+
+                # Send ARP response
+                msg = of.ofp_packet_out()
+                msg.data = ethernet_reply.pack()
+                msg.actions.append(of.ofp_action_output(port=event.port))
+                self.connection.send(msg)
+                log.info(f"Sent ARP reply with MAC {server['mac']} for {server_ip}.")
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """
@@ -107,42 +139,39 @@ class VirtualIPLoadBalancer:
         1. Client-to-Server flow
         2. Server-to-Client flow
         """
-
         server_port = SERVER_PORTS[server_ip]
 
         # Client-to-Server Flow
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800
-        match.nw_proto = 1
-        match.nw_dst = VIRTUAL_IP  
-        match.in_port = client_port 
+        match.dl_type = 0x0800  # IPv4
+        match.nw_proto = 1       # ICMP
+        match.nw_dst = VIRTUAL_IP
+        match.in_port = client_port
 
         msg.match = match
         msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        msg.actions.append(of.ofp_action_output(port=server_port))  
+        msg.actions.append(of.ofp_action_output(port=server_port))
         self.connection.send(msg)
-
-        log.info(f"Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP}.")
+        log.info(f"Installed flow: {client_ip} -> {server_ip} via {VIRTUAL_IP} on port {server_port}.")
 
         # Server-to-Client Flow
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800  
-        match.nw_proto = 1
-        match.nw_src = server_ip  
-        match.nw_dst = client_ip  
+        match.dl_type = 0x0800  # IPv4
+        match.nw_proto = 1       # ICMP
+        match.nw_src = server_ip
+        match.nw_dst = client_ip
         match.in_port = server_port
 
-        msg.match = match
-        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))  
-        msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))  
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))  
+        msg.match = match  # Assign the match object to the msg
+        msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))
+        msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
         msg.actions.append(of.ofp_action_output(port=client_port))
         self.connection.send(msg)
-
-        log.info(f"Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP}.")
+        log.info(f"Installed reverse flow: {server_ip} -> {client_ip} via {VIRTUAL_IP} on port {client_port}.")
 
 def launch():
     def start_switch(event):
