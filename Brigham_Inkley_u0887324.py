@@ -59,7 +59,7 @@ class VirtualIPLoadBalancer:
             server = SERVERS[server_index]
             server_index = (server_index + 1) % len(SERVERS)
 
-            CLIENT_TO_SERVER[src_ip] = server  # Track mapping
+            CLIENT_TO_SERVER[src_ip] = server
 
             # Construct ARP reply
             arp_reply = arp()
@@ -152,7 +152,7 @@ class VirtualIPLoadBalancer:
         # Client-to-Server Flow
         msg = of.ofp_flow_mod()
         match = of.ofp_match()
-        match.dl_type = 0x0800  # IPv4
+        match.dl_type = 0x0800
         match.nw_dst = VIRTUAL_IP
         match.in_port = client_port
         msg.match = match
