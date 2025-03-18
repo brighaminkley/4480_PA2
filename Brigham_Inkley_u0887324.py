@@ -43,79 +43,6 @@ class VirtualIPLoadBalancer:
         elif packet.type == ethernet.IP_TYPE and isinstance(packet.next, icmp):
             self._handle_icmp(event, packet)
 
-    # def _handle_arp(self, event, packet):
-    #     """Handles ARP requests for the Virtual IP and backend servers."""
-    #     global server_index
-
-    #     arp_pkt = packet.next
-    #     src_ip = arp_pkt.protosrc
-    #     dst_ip = arp_pkt.protodst
-
-    #     # Handle ARP Requests for Virtual IP
-    #     if arp_pkt.opcode == arp.REQUEST and dst_ip == VIRTUAL_IP:
-    #         log.info(f"Received ARP request for {VIRTUAL_IP}. Assigning backend server.")
-
-    #         # Select the next server in round-robin order
-    #         server = SERVERS[server_index]
-    #         server_index = (server_index + 1) % len(SERVERS)
-
-    #         CLIENT_TO_SERVER[src_ip] = server
-
-    #         # Construct ARP reply
-    #         arp_reply = arp()
-    #         arp_reply.hwsrc = server["mac"]
-    #         arp_reply.hwdst = packet.src
-    #         arp_reply.opcode = arp.REPLY
-    #         arp_reply.protosrc = VIRTUAL_IP
-    #         arp_reply.protodst = src_ip
-
-    #         # Create Ethernet frame
-    #         ethernet_reply = ethernet()
-    #         ethernet_reply.type = ethernet.ARP_TYPE
-    #         ethernet_reply.src = server["mac"]
-    #         ethernet_reply.dst = packet.src
-    #         ethernet_reply.payload = arp_reply
-
-    #         # Send ARP response
-    #         msg = of.ofp_packet_out()
-    #         msg.data = ethernet_reply.pack()
-    #         msg.actions.append(of.ofp_action_output(port=event.port))
-    #         self.connection.send(msg)
-    #         log.info(f"Sent ARP reply with MAC {server['mac']} for {VIRTUAL_IP}.")
-
-    #         self._install_flow_rules(event.port, packet.src, src_ip, server["ip"], server["mac"])
-
-    #     # Handle ARP Requests from Backend Servers (Servers Asking for Client MAC)
-    #     elif arp_pkt.opcode == arp.REQUEST and src_ip in [server["ip"] for server in SERVERS]:
-    #         log.info(f"Backend server {src_ip} is requesting MAC for {dst_ip}.")
-
-    #         if dst_ip in CLIENT_TO_SERVER:
-    #             client_mac = CLIENT_TO_SERVER[dst_ip]["mac"]
-                
-    #             # Construct ARP reply
-    #             arp_reply = arp()
-    #             arp_reply.hwsrc = client_mac
-    #             arp_reply.hwdst = packet.src
-    #             arp_reply.opcode = arp.REPLY
-    #             arp_reply.protosrc = dst_ip
-    #             arp_reply.protodst = src_ip
-
-    #             # Create Ethernet frame
-    #             ethernet_reply = ethernet()
-    #             ethernet_reply.type = ethernet.ARP_TYPE
-    #             ethernet_reply.src = client_mac
-    #             ethernet_reply.dst = packet.src
-    #             ethernet_reply.payload = arp_reply
-
-    #             # Send ARP response
-    #             msg = of.ofp_packet_out()
-    #             msg.data = ethernet_reply.pack()
-    #             msg.actions.append(of.ofp_action_output(port=event.port))
-    #             self.connection.send(msg)
-    #             log.info(f"Sent ARP reply to server {src_ip} with MAC {client_mac} for {dst_ip}.")
-    #         else:
-    #             log.warning(f"No known client MAC for {dst_ip}. Dropping ARP request.")
-
     def _handle_arp(self, event, packet):
         """Handles ARP requests for the Virtual IP and backend servers."""
         global server_index
@@ -132,7 +59,7 @@ class VirtualIPLoadBalancer:
             server = SERVERS[server_index]
             server_index = (server_index + 1) % len(SERVERS)
 
-            CLIENT_TO_SERVER[src_ip] = server  # Track mapping
+            CLIENT_TO_SERVER[src_ip] = server
 
             # Construct ARP reply
             arp_reply = arp()
@@ -156,9 +83,38 @@ class VirtualIPLoadBalancer:
             self.connection.send(msg)
             log.info(f"Sent ARP reply with MAC {server['mac']} for {VIRTUAL_IP}.")
 
-            # **Install flow rules NOW instead of waiting for ICMP**
             self._install_flow_rules(event.port, packet.src, src_ip, server["ip"], server["mac"])
 
+        # Handle ARP Requests from Backend Servers (Servers Asking for Client MAC)
+        elif arp_pkt.opcode == arp.REQUEST and src_ip in [server["ip"] for server in SERVERS]:
+            log.info(f"Backend server {src_ip} is requesting MAC for {dst_ip}.")
+
+            if dst_ip in CLIENT_TO_SERVER:
+                client_mac = CLIENT_TO_SERVER[dst_ip]["mac"]
+                
+                # Construct ARP reply
+                arp_reply = arp()
+                arp_reply.hwsrc = client_mac
+                arp_reply.hwdst = packet.src
+                arp_reply.opcode = arp.REPLY
+                arp_reply.protosrc = dst_ip
+                arp_reply.protodst = src_ip
+
+                # Create Ethernet frame
+                ethernet_reply = ethernet()
+                ethernet_reply.type = ethernet.ARP_TYPE
+                ethernet_reply.src = client_mac
+                ethernet_reply.dst = packet.src
+                ethernet_reply.payload = arp_reply
+
+                # Send ARP response
+                msg = of.ofp_packet_out()
+                msg.data = ethernet_reply.pack()
+                msg.actions.append(of.ofp_action_output(port=event.port))
+                self.connection.send(msg)
+                log.info(f"Sent ARP reply to server {src_ip} with MAC {client_mac} for {dst_ip}.")
+            else:
+                log.warning(f"No known client MAC for {dst_ip}. Dropping ARP request.")
 
     def _handle_icmp(self, event, packet):
         """Handles ICMP echo requests by forwarding the first one manually."""
