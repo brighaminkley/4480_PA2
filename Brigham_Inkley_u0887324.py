@@ -117,7 +117,7 @@ class VirtualIPLoadBalancer:
                 log.warning(f"No known client MAC for {dst_ip}. Dropping ARP request.")
 
     def _handle_icmp(self, event, packet):
-        """Handles ICMP echo requests by forwarding them to the appropriate backend server."""
+        """Handles ICMP echo requests by forwarding the first one manually."""
         ip_packet = packet.next
         client_ip = ip_packet.srcip
 
@@ -129,10 +129,8 @@ class VirtualIPLoadBalancer:
         server_ip = server["ip"]
         server_mac = server["mac"]
         server_port = SERVER_PORTS[server_ip]
-        client_mac = packet.src
-        client_port = event.port
 
-         # Modify ICMP request destination and send it
+        # Manually forward the first ICMP packet before installing the rule
         msg = of.ofp_packet_out()
         msg.data = packet.pack()
         msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
@@ -140,10 +138,11 @@ class VirtualIPLoadBalancer:
         msg.actions.append(of.ofp_action_output(port=server_port))
         self.connection.send(msg)
 
-        log.info(f"Forwarding ICMP request from {client_ip} to {server_ip}.")
+        log.info(f"Manually forwarded first ICMP request {client_ip} -> {server_ip}.")
 
-        # Install flow rules
-        self._install_flow_rules(client_port, client_mac, client_ip, server_ip, server_mac)
+        # Now install flow rules for future packets
+        self._install_flow_rules(event.port, packet.src, client_ip, server_ip, server_mac)
+
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """Installs OpenFlow rules for client-server communication."""
