@@ -130,19 +130,18 @@ class VirtualIPLoadBalancer:
         server_mac = server["mac"]
         server_port = SERVER_PORTS[server_ip]
 
-        # Manually forward the first ICMP packet before installing the rule
+        # **Manually forward the first ICMP packet**
         msg = of.ofp_packet_out()
         msg.data = packet.pack()
         msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
         msg.actions.append(of.ofp_action_output(port=server_port))
         self.connection.send(msg)
-
+        
         log.info(f"Manually forwarded first ICMP request {client_ip} -> {server_ip}.")
 
-        # Now install flow rules for future packets
+        # **Install flow rules for future packets**
         self._install_flow_rules(event.port, packet.src, client_ip, server_ip, server_mac)
-
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """Installs OpenFlow rules for client-server communication."""
