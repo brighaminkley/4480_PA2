@@ -132,18 +132,18 @@ class VirtualIPLoadBalancer:
         client_mac = packet.src
         client_port = event.port
 
-        log.info(f"Forwarding ICMP request from {client_ip} to {server_ip}.")
-
-        # Install flow rules
-        self._install_flow_rules(client_port, client_mac, client_ip, server_ip, server_mac)
-
-        # Modify ICMP request destination and send it
+         # Modify ICMP request destination and send it
         msg = of.ofp_packet_out()
         msg.data = packet.pack()
         msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
         msg.actions.append(of.ofp_action_output(port=server_port))
         self.connection.send(msg)
+
+        log.info(f"Forwarding ICMP request from {client_ip} to {server_ip}.")
+
+        # Install flow rules
+        self._install_flow_rules(client_port, client_mac, client_ip, server_ip, server_mac)
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """Installs OpenFlow rules for client-server communication."""
