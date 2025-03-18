@@ -117,7 +117,7 @@ class VirtualIPLoadBalancer:
                 log.warning(f"No known client MAC for {dst_ip}. Dropping ARP request.")
 
     def _handle_icmp(self, event, packet):
-        """Handles ICMP echo requests by forwarding the first one manually."""
+        """Handles ICMP echo requests by forwarding the first one manually and installing flow rules."""
         ip_packet = packet.next
         client_ip = ip_packet.srcip
 
@@ -130,18 +130,30 @@ class VirtualIPLoadBalancer:
         server_mac = server["mac"]
         server_port = SERVER_PORTS[server_ip]
 
-        # Manually forward the first ICMP packet
-        msg = of.ofp_packet_out()
-        msg.data = packet.pack()
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        msg.actions.append(of.ofp_action_output(port=server_port))
-        self.connection.send(msg)
-        
+        # Manually forward the first ICMP packet **using event.buffer_id**  
+        if event.ofp.buffer_id != -1:
+            log.info(f"Forwarding buffered first ICMP request {client_ip} -> {server_ip}.")
+            msg = of.ofp_packet_out()
+            msg.buffer_id = event.ofp.buffer_id
+            msg.in_port = event.port
+            msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+            msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+            msg.actions.append(of.ofp_action_output(port=server_port))
+            self.connection.send(msg)
+        else:
+            log.warning(f"No buffer ID for {client_ip} -> {server_ip}, sending manually.")
+            msg = of.ofp_packet_out()
+            msg.data = packet.pack()
+            msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+            msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+            msg.actions.append(of.ofp_action_output(port=server_port))
+            self.connection.send(msg)
+
         log.info(f"Manually forwarded first ICMP request {client_ip} -> {server_ip}.")
 
-        # **Install flow rules for future packets**
+        # **Now install flow rules for future packets**
         self._install_flow_rules(event.port, packet.src, client_ip, server_ip, server_mac)
+
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """Installs OpenFlow rules for client-server communication."""
