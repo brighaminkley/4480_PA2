@@ -28,7 +28,7 @@ class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("Load Balancer initialized.")
+        log.info("6:20 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -47,9 +47,10 @@ class VirtualIPLoadBalancer:
             self._handle_icmp(event, packet)
 
     def _handle_arp(self, event, packet):
-        """Handles ARP requests for the Virtual IP."""
+        """Handles ARP requests for the Virtual IP and backend servers."""
         global server_index
 
+        # Handle ARP Requests for Virtual IP
         if packet.payload.opcode == arp.REQUEST and packet.payload.protodst == VIRTUAL_IP:
             log.info(f"Received ARP request for {VIRTUAL_IP}. Assigning backend server.")
 
@@ -83,6 +84,34 @@ class VirtualIPLoadBalancer:
 
             # Install flow rules for forwarding packets
             self._install_flow_rules(event.port, packet.src, packet.payload.protosrc, server["ip"], server["mac"])
+
+        # Handle ARP Requests from Backend Servers (Servers Asking for Client MAC)
+        elif packet.payload.opcode == arp.REQUEST and packet.payload.protosrc in [server["ip"] for server in SERVERS]:
+            server_ip = packet.payload.protosrc
+            client_ip = packet.payload.protodst
+            log.info(f"Backend server {server_ip} is requesting MAC for {client_ip}.")
+
+            # Construct ARP reply
+            arp_reply = arp()
+            arp_reply.hwsrc = packet.src  # Use the client's MAC from the ARP request
+            arp_reply.hwdst = packet.src  # Destination MAC is the server's MAC
+            arp_reply.opcode = arp.REPLY
+            arp_reply.protosrc = client_ip
+            arp_reply.protodst = server_ip
+
+            # Create Ethernet frame
+            ethernet_reply = ethernet()
+            ethernet_reply.type = ethernet.ARP_TYPE
+            ethernet_reply.src = packet.src  # Use the client's MAC
+            ethernet_reply.dst = packet.src  # Destination MAC is the server's MAC
+            ethernet_reply.payload = arp_reply
+
+            # Send ARP response
+            msg = of.ofp_packet_out()
+            msg.data = ethernet_reply.pack()
+            msg.actions.append(of.ofp_action_output(port=event.port))
+            self.connection.send(msg)
+            log.info(f"Sent ARP reply to server {server_ip} with MAC for {client_ip}.")
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
         """Installs OpenFlow rules for client-server communication."""
