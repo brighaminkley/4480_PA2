@@ -28,7 +28,7 @@ class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("10:14 Load Balancer initialized.")
+        log.info("Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
