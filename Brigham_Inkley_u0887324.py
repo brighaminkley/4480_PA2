@@ -15,6 +15,7 @@ SERVERS = [
     {"ip": IPAddr("10.0.0.5"), "mac": EthAddr("00:00:00:00:00:05")},
     {"ip": IPAddr("10.0.0.6"), "mac": EthAddr("00:00:00:00:00:06")},
 ]
+
 server_index = 0  # Round-robin counter
 
 SERVER_PORTS = {
@@ -63,7 +64,7 @@ class VirtualIPLoadBalancer:
 
         log.info(f"Redirecting IP packet {client_ip} -> {server_ip}")
 
-        # **Install flow rules for all traffic (ICMP, TCP, UDP)**
+        # Install flow rules for traffic
         self._install_flow_rules(event.port, packet.src, client_ip, server_ip, server_mac)
 
         # **Forward first packet manually**
@@ -134,7 +135,7 @@ class VirtualIPLoadBalancer:
                 arp_reply.protosrc = dst_ip
                 arp_reply.protodst = src_ip
 
-                # Create Ethernet frame
+                # Put ARP in Ethernet frame
                 ethernet_reply = ethernet()
                 ethernet_reply.type = ethernet.ARP_TYPE
                 ethernet_reply.src = client_mac
@@ -166,7 +167,7 @@ class VirtualIPLoadBalancer:
 
         log.info(f"Handling ICMP from {client_ip} to {server_ip}")
 
-        # **Check if switch buffered the packet**
+        # Check if switch buffered the packet
         if event.ofp.buffer_id != -1:
             log.info(f"Forwarding buffered ICMP request {client_ip} -> {server_ip}.")
             msg = of.ofp_packet_out(buffer_id=event.ofp.buffer_id, in_port=event.port)
@@ -174,7 +175,7 @@ class VirtualIPLoadBalancer:
             log.warning(f"No buffer ID for {client_ip} -> {server_ip}, manually forwarding.")
             msg = of.ofp_packet_out(data=packet.pack())
 
-        # **Modify and send the packet**
+        # Send the packet to where it needs to go
         msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
         msg.actions.append(of.ofp_action_output(port=server_port))
@@ -182,7 +183,7 @@ class VirtualIPLoadBalancer:
 
         log.info(f"First ICMP packet {client_ip} -> {server_ip} forwarded manually.")
 
-        # **Install flow rules for future packets**
+        # Install flow rules for future packets
         self._install_flow_rules(event.port, packet.src, client_ip, server_ip, server_mac)
 
 
