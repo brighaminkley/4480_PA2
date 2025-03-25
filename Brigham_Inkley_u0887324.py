@@ -28,7 +28,7 @@ class VirtualIPLoadBalancer:
     def __init__(self, connection):
         self.connection = connection
         connection.addListeners(self)
-        log.info("4:12 Load Balancer initialized.")
+        log.info("6:13 Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
         global server_index
@@ -130,29 +130,20 @@ class VirtualIPLoadBalancer:
         server_mac = server["mac"]
         server_port = SERVER_PORTS[server_ip]
 
-        # Manually forward the first ICMP packet **using event.buffer_id**  
-        if event.ofp.buffer_id != -1:
-            log.info(f"Forwarding buffered first ICMP request {client_ip} -> {server_ip}.")
-            msg = of.ofp_packet_out()
-            msg.buffer_id = event.ofp.buffer_id
-            msg.in_port = event.port
-            msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-            msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-            msg.actions.append(of.ofp_action_output(port=server_port))
-            self.connection.send(msg)
-        else:
-            log.warning(f"No buffer ID for {client_ip} -> {server_ip}, sending manually.")
-            msg = of.ofp_packet_out()
-            msg.data = packet.pack()
-            msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-            msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-            msg.actions.append(of.ofp_action_output(port=server_port))
-            self.connection.send(msg)
+        log.info(f"Handling ICMP from {client_ip} to {server_ip}")
 
-        log.info(f"Manually forwarded first ICMP request {client_ip} -> {server_ip}.")
+        # **Manually forward the first packet immediately**
+        msg = of.ofp_packet_out()
+        msg.data = packet.pack()
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        msg.actions.append(of.ofp_action_output(port=server_port))
+        self.connection.send(msg)
+        
+        log.info(f"First ICMP packet {client_ip} -> {server_ip} forwarded manually.")
 
-        # **Now install flow rules for future packets**
         self._install_flow_rules(event.port, packet.src, client_ip, server_ip, server_mac)
+
 
 
     def _install_flow_rules(self, client_port, client_mac, client_ip, server_ip, server_mac):
