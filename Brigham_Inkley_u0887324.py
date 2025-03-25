@@ -40,8 +40,42 @@ class VirtualIPLoadBalancer:
 
         if packet.type == ethernet.ARP_TYPE:
             self._handle_arp(event, packet)
-        elif packet.type == ethernet.IP_TYPE and isinstance(packet.next, icmp):
-            self._handle_icmp(event, packet)
+        elif packet.type == ethernet.IP_TYPE:
+            self._handle_ip(event, packet)
+
+    def _handle_ip(self, event, packet):
+        """Handles all IP packets (ICMP, TCP, UDP) by directing them to the correct backend server."""
+        ip_packet = packet.next
+        client_ip = ip_packet.srcip
+
+        if client_ip not in CLIENT_TO_SERVER:
+            log.warning(f"No backend server mapped for {client_ip}. Assigning one.")
+            # Pick a backend server for the client
+            global server_index
+            server = SERVERS[server_index]
+            server_index = (server_index + 1) % len(SERVERS)
+            CLIENT_TO_SERVER[client_ip] = server
+
+        server = CLIENT_TO_SERVER[client_ip]
+        server_ip = server["ip"]
+        server_mac = server["mac"]
+        server_port = SERVER_PORTS[server_ip]
+
+        log.info(f"Redirecting IP packet {client_ip} -> {server_ip}")
+
+        # **Install flow rules for all traffic (ICMP, TCP, UDP)**
+        self._install_flow_rules(event.port, packet.src, client_ip, server_ip, server_mac)
+
+        # **Forward first packet manually**
+        msg = of.ofp_packet_out()
+        msg.data = packet.pack()
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        msg.actions.append(of.ofp_action_output(port=server_port))
+        self.connection.send(msg)
+
+        log.info(f"First packet {client_ip} -> {server_ip} forwarded manually.")
+
 
     def _handle_arp(self, event, packet):
         """Handles ARP requests for the Virtual IP and backend servers."""
