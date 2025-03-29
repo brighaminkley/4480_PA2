@@ -26,12 +26,17 @@ SERVER_PORTS = {
 CLIENT_TO_SERVER = {}  # Stores mappings of clients to backend servers
 
 class VirtualIPLoadBalancer:
+    """This entire class is in charge of setting up the load balancer in POX and
+    setting up OpenFlow rules for Mininet"""
     def __init__(self, connection):
+        """Initializes the load balancer"""
         self.connection = connection
         connection.addListeners(self)
-        log.info("6:13 Load Balancer initialized.")
+        log.info("Load Balancer initialized.")
 
     def _handle_PacketIn(self, event):
+        """_handle_PacketIn is used for figuring out
+        which type of packet the incoming packet is."""
         global server_index
         packet = event.parsed
 
@@ -67,7 +72,7 @@ class VirtualIPLoadBalancer:
         # Install flow rules for traffic
         self._install_flow_rules(event.port, packet.src, client_ip, server_ip, server_mac)
 
-        # **Forward first packet manually**
+        # Forward first packet manually
         msg = of.ofp_packet_out()
         msg.data = packet.pack()
         msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
@@ -224,6 +229,7 @@ class VirtualIPLoadBalancer:
         log.info(f"Installed flow: {server_ip} -> {client_ip} via {VIRTUAL_IP} on port {client_port}.")
 
 def launch():
+    """Launches the load balancer class"""
     def start_switch(event):
         log.info(f"Switch connected: {event.connection.dpid}")
         VirtualIPLoadBalancer(event.connection)
